@@ -367,29 +367,86 @@ export class WebviewTerminal {
     applySelectionHighlight();
   }
 
-  // Highlight selected text on overlay lines
+  // Highlight selected text on overlay lines (character-accurate)
   function applySelectionHighlight() {
     const sel = term.getSelectionPosition();
     if (!sel) return;
 
     const buf = term.buffer.active;
     const viewportY = buf.viewportY;
+    const dims = getCellDims();
     const overlayLines = overlay.querySelectorAll('.arabic-line');
 
     overlayLines.forEach((lineDiv) => {
-      const lineY = parseInt(lineDiv.style.top) / getCellDims().cellH;
-      const absY = viewportY + Math.round(lineY - (getCellDims().canvasTop / getCellDims().cellH));
+      const topPx = parseFloat(lineDiv.style.top);
+      const rowIndex = Math.round((topPx - dims.canvasTop) / dims.cellH);
+      const absY = viewportY + rowIndex;
 
-      // Check if this line is within selection range
-      if (absY >= sel.start.y && absY <= sel.end.y) {
-        // Walk through text nodes and wrap selected chars
-        const spans = lineDiv.querySelectorAll('span:not(.overlay-cursor)');
-        spans.forEach((span) => {
-          if (!span.classList.contains('overlay-selected')) {
-            span.classList.add('overlay-selected');
+      if (absY < sel.start.y || absY > sel.end.y) return;
+
+      // Determine selection columns for this line
+      let startX = 0;
+      let endX = Infinity;
+      if (absY === sel.start.y) startX = sel.start.x;
+      if (absY === sel.end.y) endX = sel.end.x;
+
+      // Walk through spans, tracking character position
+      let charPos = 0;
+      const spans = lineDiv.querySelectorAll('span:not(.overlay-cursor)');
+      spans.forEach((span) => {
+        const text = span.textContent || '';
+        const spanStart = charPos;
+        const spanEnd = charPos + text.length;
+        charPos = spanEnd;
+
+        if (spanEnd <= startX || spanStart >= endX) {
+          // Entirely outside selection
+          return;
+        }
+
+        if (spanStart >= startX && spanEnd <= endX) {
+          // Entirely inside selection
+          span.classList.add('overlay-selected');
+        } else {
+          // Partially selected — split the span
+          const selFrom = Math.max(0, startX - spanStart);
+          const selTo = Math.min(text.length, endX - spanStart);
+
+          // Clear original text
+          const parent = span.parentNode;
+          const color = span.style.color;
+          const fw = span.style.fontWeight;
+          const op = span.style.opacity;
+
+          // Before selection
+          if (selFrom > 0) {
+            const before = document.createElement('span');
+            before.style.color = color;
+            if (fw) before.style.fontWeight = fw;
+            if (op) before.style.opacity = op;
+            before.textContent = text.slice(0, selFrom);
+            parent.insertBefore(before, span);
           }
-        });
-      }
+          // Selected portion
+          const mid = document.createElement('span');
+          mid.style.color = color;
+          if (fw) mid.style.fontWeight = fw;
+          if (op) mid.style.opacity = op;
+          mid.classList.add('overlay-selected');
+          mid.textContent = text.slice(selFrom, selTo);
+          parent.insertBefore(mid, span);
+          // After selection
+          if (selTo < text.length) {
+            const after = document.createElement('span');
+            after.style.color = color;
+            if (fw) after.style.fontWeight = fw;
+            if (op) after.style.opacity = op;
+            after.textContent = text.slice(selTo);
+            parent.insertBefore(after, span);
+          }
+          parent.removeChild(span);
+        }
+      });
     });
   }
 
