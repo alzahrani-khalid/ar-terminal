@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'node:os';
 import * as pty from 'node-pty';
 import { ArabicReshaper } from './arabic-reshaper';
+import { AnsiParser } from './ansi-parser';
 import { containsRTL } from './rtl-detector';
 
 /**
@@ -17,9 +18,7 @@ export class WebviewTerminal {
   private ptyProcess: pty.IPty | undefined;
   private disposables: vscode.Disposable[] = [];
   private reshaper = new ArabicReshaper();
-
-  // Track accumulated Arabic chars for input echo reshaping
-  private arabicEchoBuffer: string[] = [];
+  private ansiParser = new AnsiParser();
 
   constructor(private context: vscode.ExtensionContext) {
     this.panel = vscode.window.createWebviewPanel(
@@ -83,130 +82,29 @@ export class WebviewTerminal {
   }
 
   /**
-   * Check if data is a single Arabic character echo from the shell.
-   */
-  private isSingleArabicEcho(data: string): boolean {
-    // Strip any ANSI sequences to get the actual text
-    const text = data.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
-    const chars = [...text];
-    if (chars.length !== 1) return false;
-    const cp = chars[0].codePointAt(0)!;
-    return cp >= 0x0600 && cp <= 0x06FF;
-  }
-
-  /**
    * Reshape Arabic characters in terminal data while preserving
    * all ANSI escape sequences in their exact positions.
-   * Also handles retroactive reshaping of typed Arabic input.
+   *
+   * Uses AnsiParser to strip ALL escape sequences at once,
+   * reshape the entire clean text together (so Arabic chars
+   * see their neighbors for proper joining), then restore
+   * escape sequences at their original positions.
    */
   private reshapeArabicInStream(data: string): string {
-    // Check for newline/enter — reset echo buffer
-    if (data.includes('\r') || data.includes('\n')) {
-      this.arabicEchoBuffer = [];
-    }
-
-    // Check for backspace (DEL char 0x7F or BS 0x08)
-    if (data.charCodeAt(0) === 0x7f || data.charCodeAt(0) === 0x08) {
-      this.arabicEchoBuffer.pop();
-      return data; // let xterm handle the visual backspace
-    }
-
-    // Single Arabic char echo — accumulate and re-render
-    if (this.isSingleArabicEcho(data)) {
-      // Extract the Arabic char
-      const text = data.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
-      const arabicChar = [...text][0];
-
-      this.arabicEchoBuffer.push(arabicChar);
-
-      if (this.arabicEchoBuffer.length === 1) {
-        // First char — just reshape it alone
-        return this.reshaper.reshape(arabicChar);
-      }
-
-      // Move cursor back over all previous Arabic chars
-      const prevCount = this.arabicEchoBuffer.length - 1;
-      const prevReshaped = this.reshaper.reshape(this.arabicEchoBuffer.slice(0, -1).join(''));
-      const prevLen = [...prevReshaped].length;
-      const moveBack = `\x1b[${prevLen}D`;
-
-      // Reshape the entire accumulated sequence together
-      const fullReshaped = this.reshaper.reshape(this.arabicEchoBuffer.join(''));
-
-      return moveBack + fullReshaped;
-    }
-
-    // Non-Arabic single char — reset buffer if we were accumulating
-    if (!containsRTL(data) && data.length <= 2 && !data.includes('\x1b')) {
-      this.arabicEchoBuffer = [];
-    }
-
     if (!containsRTL(data)) return data;
 
-    let result = '';
-    let textBuf = '';
-    let i = 0;
+    // 1. Strip all ANSI escape sequences, preserving positions
+    const { cleanText, codes } = this.ansiParser.strip(data);
 
-    const flushText = () => {
-      if (textBuf) {
-        if (containsRTL(textBuf)) {
-          result += this.reshaper.reshape(textBuf);
-        } else {
-          result += textBuf;
-        }
-        textBuf = '';
-      }
-    };
+    // 2. If clean text has no RTL, return as-is
+    if (!containsRTL(cleanText)) return data;
 
-    while (i < data.length) {
-      const ch = data.charCodeAt(i);
+    // 3. Reshape the entire clean text at once
+    //    This ensures Arabic chars see their neighbors for proper joining
+    const reshaped = this.reshaper.reshape(cleanText);
 
-      // ESC character — start of escape sequence
-      if (ch === 0x1b) {
-        flushText();
-
-        const start = i;
-        i++;
-        if (i >= data.length) {
-          result += data[start];
-          break;
-        }
-
-        const next = data[i];
-
-        if (next === '[') {
-          // CSI sequence: ESC [ params final
-          i++;
-          while (i < data.length && data.charCodeAt(i) >= 0x20 && data.charCodeAt(i) <= 0x3f) i++;
-          while (i < data.length && data.charCodeAt(i) >= 0x20 && data.charCodeAt(i) <= 0x2f) i++;
-          if (i < data.length) i++; // final byte
-          result += data.slice(start, i);
-        } else if (next === ']') {
-          // OSC sequence: ESC ] ... BEL/ST
-          i++;
-          while (i < data.length) {
-            if (data.charCodeAt(i) === 0x07) { i++; break; }
-            if (data.charCodeAt(i) === 0x1b && i + 1 < data.length && data[i + 1] === '\\') {
-              i += 2; break;
-            }
-            i++;
-          }
-          result += data.slice(start, i);
-        } else {
-          // Other ESC + single char
-          i++;
-          result += data.slice(start, i);
-        }
-        continue;
-      }
-
-      // Regular character — accumulate for reshaping
-      textBuf += data[i];
-      i++;
-    }
-
-    flushText();
-    return result;
+    // 4. Restore ANSI codes at their original positions
+    return this.ansiParser.restore(reshaped, codes);
   }
 
   private getHtml(): string {
