@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { PtyManager } from './pty-manager';
 import { RtlPipeline, type RtlMode } from './rtl-pipeline';
 import { StatusBarManager } from './status-bar';
+import { WebviewTerminal } from './webview-terminal';
 
 let statusBar: StatusBarManager;
 
@@ -10,7 +11,7 @@ export function activate(context: vscode.ExtensionContext) {
   statusBar.show();
   context.subscriptions.push({ dispose: () => statusBar.dispose() });
 
-  // Register terminal profile provider
+  // Register terminal profile provider (Pseudoterminal fallback)
   const profileProvider = vscode.window.registerTerminalProfileProvider(
     'rtlTerminal.rtlTerminal',
     {
@@ -26,11 +27,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register commands
   context.subscriptions.push(
+    // Primary: WebView terminal with native Arabic rendering
     vscode.commands.registerCommand('rtlTerminal.newTerminal', () => {
-      vscode.window.createTerminal({
-        name: 'RTL Terminal',
-        pty: createRtlPseudoterminal(),
-      });
+      new WebviewTerminal(context);
     }),
     vscode.commands.registerCommand('rtlTerminal.toggleMode', () => {
       const newMode = statusBar.toggle();
