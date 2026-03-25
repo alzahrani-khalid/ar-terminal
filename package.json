@@ -62,7 +62,7 @@
         {
           "id": "rtlTerminal",
           "title": "RTL Terminal",
-          "icon": "media/icon.svg"
+          "icon": "media/sidebar-icon.svg"
         }
       ]
     },
@@ -70,11 +70,16 @@
       "rtlTerminal": [
         {
           "id": "rtlTerminal.welcome",
-          "name": "RTL Terminal",
-          "type": "webview"
+          "name": "RTL Terminal"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "rtlTerminal.welcome",
+        "contents": "Open an RTL-aware terminal with Arabic text support.\n[Open RTL Terminal](command:rtlTerminal.newTerminal)\nShortcut: Cmd+Shift+T"
+      }
+    ],
     "menus": {
       "editor/title": [
         {

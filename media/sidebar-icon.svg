@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Terminal window -->
+  <rect x="2" y="3" width="20" height="18" rx="2"/>
+  <line x1="2" y1="7" x2="22" y2="7"/>
+  <!-- Three dots -->
+  <circle cx="5" cy="5" r="0.7" fill="currentColor" stroke="none"/>
+  <circle cx="7.5" cy="5" r="0.7" fill="currentColor" stroke="none"/>
+  <circle cx="10" cy="5" r="0.7" fill="currentColor" stroke="none"/>
+  <!-- Arabic ع simplified -->
+  <path d="M14 11.5c-1.5 0-2.5 1-2.5 2.5s1 2.5 2 2.5c1.5 0 2-1 2-2v-3c0-1.5-1-2.5-2.5-2.5" stroke-width="1.8"/>
+</svg>
