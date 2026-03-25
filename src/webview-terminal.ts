@@ -248,10 +248,8 @@ export class WebviewTerminal {
 
     const buf = term.buffer.active;
 
-    // Skip overlay in alternate screen buffer (TUI apps like Claude Code input, vim, htop)
-    if (buf.type !== 'normal') {
-      return;
-    }
+    // Note: overlay works in both normal and alternate screen buffers
+    // This enables Arabic rendering in TUI apps like Claude Code
     const dims = getCellDims();
     const viewportY = buf.viewportY;
 
