@@ -36,6 +36,9 @@ export class WebviewTerminal {
       }
     );
 
+    // Set tab icon
+    this.panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png');
+
     this.panel.webview.html = this.getHtml(this.panel.webview, context.extensionUri);
 
     this.panel.webview.onDidReceiveMessage(
