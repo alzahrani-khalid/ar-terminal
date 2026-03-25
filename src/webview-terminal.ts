@@ -67,9 +67,8 @@ export class WebviewTerminal {
     });
 
     this.ptyProcess.onData((data: string) => {
-      // Preprocess: reshape Arabic text while preserving ANSI sequences
-      const processed = this.reshapeArabicInStream(data);
-      this.panel.webview.postMessage({ type: 'output', data: processed });
+      // Send raw data to xterm.js — the DOM overlay handles Arabic rendering
+      this.panel.webview.postMessage({ type: 'output', data });
     });
 
     this.ptyProcess.onExit(() => {
@@ -127,23 +126,67 @@ export class WebviewTerminal {
   #terminal-container {
     width: 100%;
     height: 100%;
+    position: relative;
   }
-  /* Force proper Arabic rendering in xterm.js canvas fallback */
-  .xterm-rows {
-    font-family: 'Menlo', 'Consolas', 'Courier New', monospace !important;
+  /* Arabic overlay sits on top of xterm.js canvas */
+  #arabic-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 10;
+    overflow: hidden;
   }
+  .arabic-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    white-space: pre;
+    unicode-bidi: plaintext;
+    direction: rtl;
+    text-align: right;
+    font-family: 'Geeza Pro', 'Arabic Typesetting', 'Noto Naskh Arabic',
+                 'Tahoma', 'Arial', sans-serif;
+    padding-right: 4px;
+    background: var(--vscode-terminal-background, #1e1e1e);
+  }
+  .c-default { color: #d4d4d4; }
+  .c-0 { color: #000; } .c-1 { color: #cd3131; } .c-2 { color: #0dbc79; }
+  .c-3 { color: #e5e510; } .c-4 { color: #2472c8; } .c-5 { color: #bc3fbc; }
+  .c-6 { color: #11a8cd; } .c-7 { color: #e5e5e5; }
+  .c-8 { color: #666; } .c-9 { color: #f14c4c; } .c-10 { color: #23d18b; }
+  .c-11 { color: #f5f543; } .c-12 { color: #3b8eea; } .c-13 { color: #d670d6; }
+  .c-14 { color: #29b8db; } .c-15 { color: #fff; }
+  .c-bold { font-weight: bold; }
 </style>
 </head>
 <body>
-<div id="terminal-container"></div>
+<div id="terminal-container">
+  <div id="arabic-overlay"></div>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
 <script>
 (function() {
   const vscode = acquireVsCodeApi();
+  const overlay = document.getElementById('arabic-overlay');
 
-  // Create terminal with DOM renderer for better Unicode support
+  function isRTLChar(cp) {
+    return (cp >= 0x0590 && cp <= 0x05FF) || (cp >= 0x0600 && cp <= 0x06FF) ||
+           (cp >= 0x0700 && cp <= 0x074F) || (cp >= 0x0750 && cp <= 0x077F) ||
+           (cp >= 0x08A0 && cp <= 0x08FF) || (cp >= 0xFB1D && cp <= 0xFB4F) ||
+           (cp >= 0xFB50 && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF);
+  }
+  function containsRTL(text) {
+    for (const ch of text) {
+      if (isRTLChar(ch.codePointAt(0))) return true;
+    }
+    return false;
+  }
+
   const term = new Terminal({
     cursorBlink: true,
     fontSize: 13,
@@ -159,32 +202,111 @@ export class WebviewTerminal {
     convertEol: false,
   });
 
-  // Load addons
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon.WebLinksAddon());
 
-  // Open terminal
   const container = document.getElementById('terminal-container');
   term.open(container);
   fitAddon.fit();
 
-  // Send keyboard input to shell
+  // Get xterm cell dimensions for overlay positioning
+  function getCellDims() {
+    const core = term._core;
+    if (core && core._renderService) {
+      const d = core._renderService.dimensions;
+      return {
+        cellH: d.css.cell.height,
+        canvasTop: d.css.canvas.top || 0,
+        canvasLeft: d.css.canvas.left || 0,
+      };
+    }
+    return { cellH: 17, canvasTop: 0, canvasLeft: 0 };
+  }
+
+  // Scan visible terminal rows, overlay Arabic lines with proper HTML text
+  function updateArabicOverlay() {
+    // Clear overlay using DOM methods (safe, no innerHTML)
+    while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
+
+    const buf = term.buffer.active;
+    const dims = getCellDims();
+    const viewportY = buf.viewportY;
+
+    for (let y = 0; y < term.rows; y++) {
+      const bufLine = buf.getLine(viewportY + y);
+      if (!bufLine) continue;
+
+      // Extract full line text
+      let lineText = '';
+      for (let x = 0; x < bufLine.length; x++) {
+        const cell = bufLine.getCell(x);
+        if (cell) lineText += cell.getChars() || ' ';
+      }
+
+      if (!containsRTL(lineText.trim())) continue;
+
+      // Create overlay div for this line
+      const lineDiv = document.createElement('div');
+      lineDiv.className = 'arabic-line';
+      lineDiv.style.top = (dims.canvasTop + y * dims.cellH) + 'px';
+      lineDiv.style.height = dims.cellH + 'px';
+      lineDiv.style.lineHeight = dims.cellH + 'px';
+      lineDiv.style.fontSize = term.options.fontSize + 'px';
+
+      // Build styled text segments (group consecutive chars with same color)
+      let currentSpan = null;
+      let currentCls = '';
+
+      for (let x = 0; x < bufLine.length; x++) {
+        const cell = bufLine.getCell(x);
+        if (!cell) continue;
+        const ch = cell.getChars();
+        if (!ch && x > 0) continue; // skip empty cells (wide char continuations)
+
+        let cls = 'c-default';
+        const fgMode = cell.getFgColorMode();
+        if (fgMode === 1) cls = 'c-' + cell.getFgColor();
+        if (cell.isBold()) cls += ' c-bold';
+
+        if (cls !== currentCls || !currentSpan) {
+          currentSpan = document.createElement('span');
+          currentSpan.className = cls;
+          lineDiv.appendChild(currentSpan);
+          currentCls = cls;
+        }
+        currentSpan.textContent += ch || ' ';
+      }
+
+      overlay.appendChild(lineDiv);
+    }
+  }
+
+  // Schedule overlay update (debounced)
+  let overlayTimer = null;
+  function scheduleOverlay() {
+    if (overlayTimer) clearTimeout(overlayTimer);
+    overlayTimer = setTimeout(updateArabicOverlay, 30);
+  }
+
+  term.onWriteParsed(scheduleOverlay);
+  term.onScroll(scheduleOverlay);
+  term.onResize(scheduleOverlay);
+
   term.onData((data) => {
     vscode.postMessage({ type: 'input', data });
   });
 
-  // Handle resize
   term.onResize(({ cols, rows }) => {
     vscode.postMessage({ type: 'resize', cols, rows });
   });
 
   const resizeObserver = new ResizeObserver(() => {
     fitAddon.fit();
+    scheduleOverlay();
   });
   resizeObserver.observe(container);
 
-  // Handle messages from extension
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (msg.type === 'output') {
@@ -194,7 +316,6 @@ export class WebviewTerminal {
     }
   });
 
-  // Signal ready
   vscode.postMessage({ type: 'ready' });
 })();
 </script>
