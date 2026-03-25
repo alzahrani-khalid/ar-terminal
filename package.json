@@ -20,6 +20,13 @@
     "terminal": {
       "profiles": [{ "id": "rtlTerminal.rtlTerminal", "title": "RTL Terminal", "icon": "terminal" }]
     },
+    "keybindings": [
+      {
+        "command": "rtlTerminal.newTerminal",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t"
+      }
+    ],
     "configuration": {
       "title": "RTL Terminal",
       "properties": {

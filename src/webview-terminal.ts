@@ -67,8 +67,10 @@ export class WebviewTerminal {
     });
 
     this.ptyProcess.onData((data: string) => {
-      // Send raw data to xterm.js — the DOM overlay handles Arabic rendering
-      this.panel.webview.postMessage({ type: 'output', data });
+      // Pre-reshape Arabic before sending to xterm.js
+      // This reduces the "flash" of disconnected letters before overlay kicks in
+      const processed = this.reshapeArabicInStream(data);
+      this.panel.webview.postMessage({ type: 'output', data: processed });
     });
 
     this.ptyProcess.onExit(() => {
@@ -151,6 +153,21 @@ export class WebviewTerminal {
     padding-left: 4px;
     background: var(--vscode-terminal-background, #1e1e1e);
   }
+  /* Overlay cursor */
+  .overlay-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.2em;
+    background: #d4d4d4;
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+    position: absolute;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  /* Selection highlight */
+  .overlay-selected {
+    background: rgba(38, 79, 120, 0.6);
+  }
   .c-default { color: #d4d4d4; }
   .c-0 { color: #000; } .c-1 { color: #cd3131; } .c-2 { color: #0dbc79; }
   .c-3 { color: #e5e510; } .c-4 { color: #2472c8; } .c-5 { color: #bc3fbc; }
@@ -215,12 +232,13 @@ export class WebviewTerminal {
     if (core && core._renderService) {
       const d = core._renderService.dimensions;
       return {
+        cellW: d.css.cell.width,
         cellH: d.css.cell.height,
         canvasTop: d.css.canvas.top || 0,
         canvasLeft: d.css.canvas.left || 0,
       };
     }
-    return { cellH: 17, canvasTop: 0, canvasLeft: 0 };
+    return { cellW: 7.8, cellH: 17, canvasTop: 0, canvasLeft: 0 };
   }
 
   // Scan visible terminal rows, overlay Arabic lines with proper HTML text
@@ -329,20 +347,63 @@ export class WebviewTerminal {
         return 'rgb(' + gray + ',' + gray + ',' + gray + ')';
       }
 
+      // Add cursor if it's on this line
+      const cursorY = buf.cursorY;
+      const cursorX = buf.cursorX;
+      if (y === cursorY) {
+        const cursorEl = document.createElement('span');
+        cursorEl.className = 'overlay-cursor';
+        // Position cursor at the right character offset
+        const cellW = getCellDims().cellW || 7.8;
+        cursorEl.style.left = (dims.canvasLeft + cursorX * cellW) + 'px';
+        cursorEl.style.height = dims.cellH + 'px';
+        lineDiv.appendChild(cursorEl);
+      }
+
       overlay.appendChild(lineDiv);
     }
+
+    // Apply selection highlighting
+    applySelectionHighlight();
+  }
+
+  // Highlight selected text on overlay lines
+  function applySelectionHighlight() {
+    const sel = term.getSelectionPosition();
+    if (!sel) return;
+
+    const buf = term.buffer.active;
+    const viewportY = buf.viewportY;
+    const overlayLines = overlay.querySelectorAll('.arabic-line');
+
+    overlayLines.forEach((lineDiv) => {
+      const lineY = parseInt(lineDiv.style.top) / getCellDims().cellH;
+      const absY = viewportY + Math.round(lineY - (getCellDims().canvasTop / getCellDims().cellH));
+
+      // Check if this line is within selection range
+      if (absY >= sel.start.y && absY <= sel.end.y) {
+        // Walk through text nodes and wrap selected chars
+        const spans = lineDiv.querySelectorAll('span:not(.overlay-cursor)');
+        spans.forEach((span) => {
+          if (!span.classList.contains('overlay-selected')) {
+            span.classList.add('overlay-selected');
+          }
+        });
+      }
+    });
   }
 
   // Schedule overlay update (debounced)
   let overlayTimer = null;
   function scheduleOverlay() {
     if (overlayTimer) clearTimeout(overlayTimer);
-    overlayTimer = setTimeout(updateArabicOverlay, 30);
+    overlayTimer = setTimeout(updateArabicOverlay, 16); // reduced to 16ms (1 frame)
   }
 
   term.onWriteParsed(scheduleOverlay);
   term.onScroll(scheduleOverlay);
   term.onResize(scheduleOverlay);
+  term.onSelectionChange(scheduleOverlay);
 
   term.onData((data) => {
     vscode.postMessage({ type: 'input', data });
