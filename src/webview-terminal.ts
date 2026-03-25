@@ -253,28 +253,60 @@ export class WebviewTerminal {
       lineDiv.style.lineHeight = dims.cellH + 'px';
       lineDiv.style.fontSize = term.options.fontSize + 'px';
 
-      // Build styled text segments (group consecutive chars with same color)
+      // ANSI 16-color palette
+      const palette16 = [
+        '#000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5',
+        '#666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#fff'
+      ];
+
+      // Build styled text segments with full color support
       let currentSpan = null;
-      let currentCls = '';
+      let currentKey = '';
 
       for (let x = 0; x < bufLine.length; x++) {
         const cell = bufLine.getCell(x);
         if (!cell) continue;
         const ch = cell.getChars();
-        if (!ch && x > 0) continue; // skip empty cells (wide char continuations)
+        if (!ch && x > 0) continue; // skip wide char continuations
 
-        let cls = 'c-default';
+        // Extract foreground color
+        let fgColor = '#d4d4d4'; // default
         const fgMode = cell.getFgColorMode();
-        if (fgMode === 1) cls = 'c-' + cell.getFgColor();
-        if (cell.isBold()) cls += ' c-bold';
+        if (fgMode === 1) {
+          // Palette color (0-255)
+          const idx = cell.getFgColor();
+          if (idx < 16) fgColor = palette16[idx];
+          else fgColor = palette256(idx);
+        } else if (fgMode === 2) {
+          // RGB color
+          fgColor = '#' + cell.getFgColor().toString(16).padStart(6, '0');
+        }
 
-        if (cls !== currentCls || !currentSpan) {
+        const bold = cell.isBold();
+        const styleKey = fgColor + (bold ? 'b' : '');
+
+        if (styleKey !== currentKey || !currentSpan) {
           currentSpan = document.createElement('span');
-          currentSpan.className = cls;
+          currentSpan.style.color = fgColor;
+          if (bold) currentSpan.style.fontWeight = 'bold';
           lineDiv.appendChild(currentSpan);
-          currentCls = cls;
+          currentKey = styleKey;
         }
         currentSpan.textContent += ch || ' ';
+      }
+
+      // 256-color palette helper
+      function palette256(idx) {
+        if (idx < 16) return palette16[idx];
+        if (idx < 232) {
+          const i = idx - 16;
+          const r = Math.floor(i / 36) * 51;
+          const g = Math.floor((i % 36) / 6) * 51;
+          const b = (i % 6) * 51;
+          return 'rgb(' + r + ',' + g + ',' + b + ')';
+        }
+        const gray = (idx - 232) * 10 + 8;
+        return 'rgb(' + gray + ',' + gray + ',' + gray + ')';
       }
 
       overlay.appendChild(lineDiv);
