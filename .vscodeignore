@@ -1,9 +1,11 @@
 .vscode/**
 src/**
-node_modules/**
 docs/**
 *.ts
 tsconfig.json
 esbuild.mjs
 vitest.config.*
 **/*.test.*
+media/icon.svg
+.env
+.gitignore

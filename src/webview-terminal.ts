@@ -30,10 +30,13 @@ export class WebviewTerminal {
       {
         enableScripts: true,
         retainContextWhenHidden: true,
+        localResourceRoots: [
+          vscode.Uri.joinPath(context.extensionUri, 'media'),
+        ],
       }
     );
 
-    this.panel.webview.html = this.getHtml();
+    this.panel.webview.html = this.getHtml(this.panel.webview, context.extensionUri);
 
     this.panel.webview.onDidReceiveMessage(
       (message) => {
@@ -113,12 +116,18 @@ export class WebviewTerminal {
     return this.ansiParser.restore(reshaped, codes);
   }
 
-  private getHtml(): string {
+  private getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+    const mediaUri = vscode.Uri.joinPath(extensionUri, 'media', 'xterm');
+    const xtermCss = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'xterm.css'));
+    const xtermJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'xterm.js'));
+    const fitJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-fit.js'));
+    const webLinksJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-web-links.js'));
+
     return /* html */ `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<link rel="stylesheet" href="${xtermCss}">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -183,9 +192,9 @@ export class WebviewTerminal {
 <div id="terminal-container">
   <div id="arabic-overlay"></div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<script src="${xtermJs}"></script>
+<script src="${fitJs}"></script>
+<script src="${webLinksJs}"></script>
 <script>
 (function() {
   const vscode = acquireVsCodeApi();
