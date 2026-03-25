@@ -147,8 +147,7 @@ export class WebviewTerminal {
     unicode-bidi: normal;
     direction: ltr;
     text-align: left;
-    font-family: 'Geeza Pro', 'Arabic Typesetting', 'Noto Naskh Arabic',
-                 'Tahoma', 'Arial', sans-serif;
+    font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
     padding-left: 4px;
     background: var(--vscode-terminal-background, #1e1e1e);
   }
