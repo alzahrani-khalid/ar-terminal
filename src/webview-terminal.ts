@@ -101,20 +101,14 @@ export class WebviewTerminal {
     // 2. If clean text has no RTL, return as-is
     if (!containsRTL(cleanText)) return data;
 
-    // 3. Process line by line (BiDi operates per-line)
-    const lines = cleanText.split('\n');
-    const processedLines = lines.map((line) => {
-      if (!containsRTL(line)) return line;
-      // 3a. Reshape Arabic characters (join letters)
-      const reshaped = this.reshaper.reshape(line);
-      // 3b. Apply BiDi reordering (RTL text reads right-to-left)
-      const reordered = this.bidiEngine.reorder(reshaped);
-      return reordered;
-    });
-    const processed = processedLines.join('\n');
+    // 3. Reshape the entire clean text at once
+    //    This ensures Arabic chars see their neighbors for proper joining
+    //    No BiDi reordering — xterm.js is LTR, and reshaping alone makes
+    //    Arabic readable with connected letters in the terminal
+    const reshaped = this.reshaper.reshape(cleanText);
 
     // 4. Restore ANSI codes at their original positions
-    return this.ansiParser.restore(processed, codes);
+    return this.ansiParser.restore(reshaped, codes);
   }
 
   private getHtml(): string {
