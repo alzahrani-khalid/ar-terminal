@@ -67,9 +67,10 @@ function createRtlPseudoterminal(): vscode.Pseudoterminal {
           const mode = statusBar.getMode();
           const processed = pipeline.process(data, mode);
           writeEmitter.fire(processed);
-        } catch {
+        } catch (err) {
           // Fallback: write raw data on error
           writeEmitter.fire(data);
+          console.error('[RTL Terminal] Pipeline error:', err);
         }
       });
 
@@ -77,12 +78,19 @@ function createRtlPseudoterminal(): vscode.Pseudoterminal {
         closeEmitter.fire(code);
       });
 
-      ptyManager.start({
-        shell: config.get<string>('shell') || undefined,
-        shellArgs: config.get<string[]>('shellArgs') || undefined,
-        cols: initialDimensions?.columns,
-        rows: initialDimensions?.rows,
-      });
+      try {
+        ptyManager.start({
+          shell: config.get<string>('shell') || undefined,
+          shellArgs: config.get<string[]>('shellArgs') || undefined,
+          cols: initialDimensions?.columns,
+          rows: initialDimensions?.rows,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[RTL Terminal] Failed to start PTY:', message);
+        writeEmitter.fire(`\r\n[RTL Terminal] Error: ${message}\r\n`);
+        writeEmitter.fire('If node-pty failed to load, try: npm rebuild node-pty\r\n');
+      }
     },
 
     close(): void {
