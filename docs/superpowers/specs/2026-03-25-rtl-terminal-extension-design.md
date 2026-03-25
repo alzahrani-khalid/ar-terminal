@@ -265,6 +265,159 @@ Prefer minimal dependencies. Arabic reshaper will be custom (it's a lookup table
 5. Auto-detection correctly activates for RTL text and stays inactive for LTR-only text
 6. Works in VS Code, Cursor, and Antigravity (any VS Code fork)
 
+## Streaming & Partial Output Handling
+
+Terminal output arrives in arbitrary byte chunks. A multi-byte UTF-8 character or ANSI escape sequence can be split across two `data` events.
+
+**Strategy:**
+- Maintain a **byte buffer** in the PTY manager
+- On each `data` event, append to buffer
+- Check if the buffer ends with an incomplete UTF-8 sequence (leading byte without expected continuation bytes) or an incomplete ANSI escape (ESC without terminator)
+- If incomplete: hold the buffer, wait for next chunk (with a 50ms timeout before flushing as-is)
+- If complete: flush through the RTL pipeline
+- Combine with the 16ms frame-batching: buffer collects chunks, flushes at frame boundaries only if all sequences are complete
+
+## TUI / Full-Screen App Passthrough
+
+Interactive full-screen programs (vim, htop, top, less, nano) use the **alternate screen buffer** via escape sequences `\e[?1049h` (enter) and `\e[?1049l` (leave). These programs send precise cursor-positioning sequences that the RTL pipeline would corrupt.
+
+**Strategy:**
+- Monitor output for alternate screen buffer activation (`\e[?1049h` or `\e[?47h`)
+- When detected, switch to **passthrough mode**: pipe all output directly to xterm.js without any RTL processing
+- When alternate screen buffer deactivation is detected (`\e[?1049l` or `\e[?47l`), resume RTL processing
+- This means: vim, htop, etc. work exactly as they do in a normal terminal
+
+## ANSI Position Remapping
+
+After Arabic reshaping, the string length changes (e.g., two characters become one ligature). ANSI codes stored at character positions must be remapped.
+
+**Strategy:**
+- During reshaping, build a **source-to-target index map**: for each character index in the original clean text, record its index in the reshaped text
+- When reshaping merges characters (ligatures), map all source indices to the single target index
+- After BiDi reordering, the reorder function also produces a **visual index map**
+- Compose both maps: `original position → reshaped position → visual position`
+- Insert ANSI codes at the composed final positions
+- If multiple ANSI codes map to the same position, preserve their original order
+
+## Line Width Recalculation
+
+Arabic reshaping changes character count (ligatures reduce width). Terminal lines have a fixed column width.
+
+**Strategy:**
+- After reshaping + BiDi reordering, calculate the visual width of the processed line using Unicode East Asian Width properties
+- If the processed line is shorter than the terminal width, pad with spaces (right-pad for LTR base direction, left-pad for RTL base direction)
+- If longer (shouldn't happen with reshaping, but possible with edge cases), let xterm.js handle natural wrapping
+- On terminal resize events, reprocess the visible buffer with new column width
+
+## Cursor & Keyboard Navigation
+
+The Pseudoterminal API does not give us direct control over xterm.js cursor positioning. The cursor is managed by xterm.js based on the text we write.
+
+**Acknowledged limitation:** After BiDi reordering, arrow key navigation in the prompt may not move the cursor in the expected visual direction. This is a known limitation of the Pseudoterminal approach.
+
+**Mitigation:**
+- For **output text** (command results): cursor positioning is not relevant — user reads but doesn't navigate
+- For **input text** (typing in the prompt): the shell (zsh/bash) manages cursor positioning via its own escape sequences. We pass input through without reordering, so readline/zsh-line-editor cursor movement works normally
+- If `rtlTerminal.reshapeInput` is enabled, we only reshape the display of typed text, not the underlying shell buffer
+
+## Selection & Clipboard
+
+xterm.js handles text selection at the rendered level. Since we write visually-reordered text to xterm.js, selecting and copying will yield the visual order (which is the correct reading order for the user).
+
+**Trade-off:** Copying Arabic text will yield the visual (display) order, not the logical (memory) order. For most use cases (pasting into a document, sharing text), visual order is what users expect. For pasting back into a terminal command, it may need re-processing — this is an accepted limitation.
+
+## Risks
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| `node-pty` native module build failure | Extension won't load | Ship prebuilt binaries for macOS (arm64, x64), Linux (x64), Windows (x64). Use `@vscode/vsce` platform-specific packaging. Fallback: error message directing user to install build tools. |
+| Performance regression on large output | Visible lag when `cat`-ing large Arabic files | Fast-path bypass for non-RTL text. 16ms frame batching. LRU word cache. Benchmark target: <5ms per frame of processing. |
+| Incorrect shaping for rare Arabic letter combinations | Visual glitches | Comprehensive test suite with all Arabic letter forms. Use Unicode reference test data. |
+| VS Code API changes | Extension breaks on update | Pin minimum VS Code engine version. Use only stable APIs (Pseudoterminal is stable since VS Code 1.37). |
+| BiDi edge cases with deeply nested directional runs | Incorrect display of complex mixed text | Use a proven BiDi library (`bidi-js`) rather than custom implementation. Test against Unicode BiDi conformance test suite. |
+| Error in pipeline crashes terminal | User loses terminal session | Wrap pipeline in try-catch. On error, fall back to passthrough (show raw text) and log error. Never crash the terminal process. |
+
+## BiDi Library Decision
+
+**Decision: Use `bidi-js`** (https://github.com/nicolo-ribaudo/bidi-js)
+
+- Pure JavaScript, no native dependencies
+- Full UAX #9 implementation
+- ~15KB minified
+- Well-tested against Unicode conformance suite
+- If `bidi-js` proves unsuitable at implementation time, fallback to `unicode-bidirectional`
+
+## Edge Cases
+
+| Edge Case | Handling |
+|-----------|----------|
+| Zero-width joiners (ZWJ) / non-joiners (ZWNJ) | Preserve in reshaping pipeline. ZWJ forces joining, ZWNJ forces separation. |
+| Emoji within Arabic text | Treat as neutral characters in BiDi. Pass through reshaper untouched. |
+| Tab characters | Expand to spaces before reshaping (using terminal's tab stop width, default 8). |
+| Nested BiDi levels (Arabic → English → Arabic) | Handled by UAX #9 algorithm in `bidi-js`. Test with Unicode BiDi conformance test vectors. |
+| Diacritics/tashkeel (َ ُ ِ ّ) | Preserve combining marks. Attach to base character during reshaping. |
+| Arabic-Indic numerals (٠١٢٣٤٥٦٧٨٩) | Classify as AN (Arabic Number) in BiDi. No reshaping needed. |
+| Very long lines (>1000 chars) | Process normally. Performance bounded by line length, not total output. |
+| Empty lines / whitespace-only | Pass through without processing. |
+
+## Extension Manifest (`contributes`)
+
+```jsonc
+{
+  "contributes": {
+    "terminal": {
+      "profiles": [
+        {
+          "id": "rtlTerminal",
+          "title": "RTL Terminal",
+          "icon": "terminal"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "rtlTerminal.newTerminal", "title": "RTL Terminal: New Terminal" },
+      { "command": "rtlTerminal.toggleMode", "title": "RTL Terminal: Toggle Mode" },
+      { "command": "rtlTerminal.setModeOn", "title": "RTL Terminal: Set Mode On" },
+      { "command": "rtlTerminal.setModeOff", "title": "RTL Terminal: Set Mode Off" },
+      { "command": "rtlTerminal.setModeAuto", "title": "RTL Terminal: Set Mode Auto" }
+    ],
+    "configuration": {
+      "title": "RTL Terminal",
+      "properties": {
+        "rtlTerminal.mode": {
+          "type": "string",
+          "enum": ["auto", "on", "off"],
+          "default": "auto",
+          "description": "RTL processing mode. Auto detects RTL text automatically."
+        },
+        "rtlTerminal.shell": {
+          "type": "string",
+          "default": "",
+          "description": "Shell executable path. Empty uses VS Code's default shell."
+        },
+        "rtlTerminal.shellArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Arguments to pass to the shell."
+        },
+        "rtlTerminal.reshapeInput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reshape Arabic text as you type in the terminal."
+        },
+        "rtlTerminal.logLevel": {
+          "type": "string",
+          "enum": ["off", "error", "warn", "info", "debug"],
+          "default": "off",
+          "description": "Logging level for debugging."
+        }
+      }
+    }
+  }
+}
+```
+
 ## Future Considerations (not in scope)
 
 - Publishing to VS Code Marketplace
