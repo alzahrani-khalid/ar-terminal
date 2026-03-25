@@ -11,6 +11,14 @@ export function activate(context: vscode.ExtensionContext) {
   statusBar.show();
   context.subscriptions.push({ dispose: () => statusBar.dispose() });
 
+  // Register empty tree data provider for sidebar view (makes the icon show)
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('rtlTerminal.welcome', {
+      getTreeItem: () => new vscode.TreeItem(''),
+      getChildren: () => [],
+    })
+  );
+
   // Register terminal profile provider (Pseudoterminal fallback)
   const profileProvider = vscode.window.registerTerminalProfileProvider(
     'rtlTerminal.rtlTerminal',
