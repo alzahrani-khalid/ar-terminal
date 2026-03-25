@@ -62,10 +62,7 @@
         {
           "id": "rtlTerminal",
           "title": "RTL Terminal",
-          "icon": {
-            "light": "media/sidebar-icon-light.svg",
-            "dark": "media/sidebar-icon-dark.svg"
-          }
+          "icon": "media/sidebar-icon.svg"
         }
       ]
     },
