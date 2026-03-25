@@ -18,7 +18,11 @@
     "commands": [
       {
         "command": "rtlTerminal.newTerminal",
-        "title": "RTL Terminal: New Terminal"
+        "title": "RTL Terminal: New Terminal",
+        "icon": {
+          "light": "media/icon.png",
+          "dark": "media/icon.png"
+        }
       },
       {
         "command": "rtlTerminal.toggleMode",
@@ -53,6 +57,32 @@
         "mac": "cmd+shift+t"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rtlTerminal",
+          "title": "RTL Terminal",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "rtlTerminal": [
+        {
+          "id": "rtlTerminal.welcome",
+          "name": "RTL Terminal",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "rtlTerminal.newTerminal",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "RTL Terminal",
       "properties": {
