@@ -2,6 +2,11 @@ import * as vscode from 'vscode';
 import * as os from 'node:os';
 import * as pty from 'node-pty';
 
+/**
+ * WebView-based terminal that uses the browser's native text engine
+ * for proper Arabic/RTL rendering. Shell data is processed server-side
+ * to strip escape sequences and sent as structured segments to the WebView.
+ */
 export class WebviewTerminal {
   private panel: vscode.WebviewPanel;
   private ptyProcess: pty.IPty | undefined;
@@ -20,7 +25,6 @@ export class WebviewTerminal {
 
     this.panel.webview.html = this.getHtml();
 
-    // Handle messages from WebView (keyboard input)
     this.panel.webview.onDidReceiveMessage(
       (message) => {
         if (message.type === 'input') {
@@ -33,10 +37,7 @@ export class WebviewTerminal {
       this.disposables
     );
 
-    this.panel.onDidDispose(() => {
-      this.dispose();
-    });
-
+    this.panel.onDidDispose(() => this.dispose());
     this.startShell();
   }
 
@@ -55,10 +56,9 @@ export class WebviewTerminal {
     });
 
     this.ptyProcess.onData((data: string) => {
-      this.panel.webview.postMessage({
-        type: 'output',
-        data,
-      });
+      // Process server-side: parse ANSI into structured segments
+      const segments = this.parseAnsiToSegments(data);
+      this.panel.webview.postMessage({ type: 'output', segments });
     });
 
     this.ptyProcess.onExit(() => {
@@ -72,281 +72,348 @@ export class WebviewTerminal {
     this.panel.dispose();
   }
 
-  private getHtml(): string {
-    return `<!DOCTYPE html>
-<html lang="ar" dir="ltr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    background: var(--vscode-terminal-background, #1e1e1e);
-    color: var(--vscode-terminal-foreground, #d4d4d4);
-    font-family: 'Cascadia Code', 'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace;
-    font-size: 14px;
-    line-height: 1.4;
-    padding: 8px 12px;
-    height: 100vh;
-    overflow: hidden;
-    cursor: text;
-  }
-
-  #terminal {
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    overflow-y: auto;
-    height: calc(100vh - 16px);
-    unicode-bidi: plaintext;
-    direction: ltr;
-  }
-
-  /* Arabic and RTL text segments get automatic browser BiDi */
-  #terminal span[dir="rtl"],
-  #terminal .rtl-segment {
-    unicode-bidi: embed;
-    direction: rtl;
-  }
-
-  /* ANSI color classes */
-  .ansi-black { color: #000000; }
-  .ansi-red { color: #cd3131; }
-  .ansi-green { color: #0dbc79; }
-  .ansi-yellow { color: #e5e510; }
-  .ansi-blue { color: #2472c8; }
-  .ansi-magenta { color: #bc3fbc; }
-  .ansi-cyan { color: #11a8cd; }
-  .ansi-white { color: #e5e5e5; }
-  .ansi-bright-black { color: #666666; }
-  .ansi-bright-red { color: #f14c4c; }
-  .ansi-bright-green { color: #23d18b; }
-  .ansi-bright-yellow { color: #f5f543; }
-  .ansi-bright-blue { color: #3b8eea; }
-  .ansi-bright-magenta { color: #d670d6; }
-  .ansi-bright-cyan { color: #29b8db; }
-  .ansi-bright-white { color: #ffffff; }
-  .ansi-bold { font-weight: bold; }
-  .ansi-italic { font-style: italic; }
-  .ansi-underline { text-decoration: underline; }
-  .ansi-dim { opacity: 0.7; }
-  .ansi-strikethrough { text-decoration: line-through; }
-
-  /* Background colors */
-  .ansi-bg-black { background: #000000; }
-  .ansi-bg-red { background: #cd3131; }
-  .ansi-bg-green { background: #0dbc79; }
-  .ansi-bg-yellow { background: #e5e510; }
-  .ansi-bg-blue { background: #2472c8; }
-  .ansi-bg-magenta { background: #bc3fbc; }
-  .ansi-bg-cyan { background: #11a8cd; }
-  .ansi-bg-white { background: #e5e5e5; }
-
-  /* Cursor */
-  #cursor {
-    display: inline-block;
-    width: 0.6em;
-    height: 1.2em;
-    background: var(--vscode-terminalCursor-foreground, #d4d4d4);
-    animation: blink 1s step-end infinite;
-    vertical-align: text-bottom;
-  }
-
-  @keyframes blink {
-    50% { opacity: 0; }
-  }
-
-  /* Hidden input for capturing keyboard */
-  #input-capture {
-    position: absolute;
-    left: -9999px;
-    top: 0;
-    opacity: 0;
-    width: 1px;
-    height: 1px;
-  }
-</style>
-</head>
-<body>
-<div id="terminal"></div>
-<textarea id="input-capture" autofocus autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
-
-<script>
-(function() {
-  const vscode = acquireVsCodeApi();
-  const terminal = document.getElementById('terminal');
-  const input = document.getElementById('input-capture');
-
-  // ANSI parser state
-  let currentStyles = [];
-  let cursorVisible = true;
-
-  // Focus input on any click
-  document.addEventListener('click', () => input.focus());
-  document.addEventListener('focus', () => input.focus());
-  window.addEventListener('focus', () => input.focus());
-
-  // Capture keyboard input
-  input.addEventListener('input', (e) => {
-    const data = e.target.value;
-    if (data) {
-      vscode.postMessage({ type: 'input', data });
-      e.target.value = '';
-    }
-  });
-
-  // Handle special keys
-  input.addEventListener('keydown', (e) => {
-    let data = '';
-    switch (e.key) {
-      case 'Enter': data = '\\r'; break;
-      case 'Backspace': data = '\\x7f'; break;
-      case 'Tab': data = '\\t'; e.preventDefault(); break;
-      case 'Escape': data = '\\x1b'; break;
-      case 'ArrowUp': data = '\\x1b[A'; break;
-      case 'ArrowDown': data = '\\x1b[B'; break;
-      case 'ArrowRight': data = '\\x1b[C'; break;
-      case 'ArrowLeft': data = '\\x1b[D'; break;
-      case 'Home': data = '\\x1b[H'; break;
-      case 'End': data = '\\x1b[F'; break;
-      case 'Delete': data = '\\x1b[3~'; break;
-      default:
-        if (e.ctrlKey && e.key.length === 1) {
-          data = String.fromCharCode(e.key.charCodeAt(0) - 96);
-          e.preventDefault();
-        }
-        return; // let input event handle normal chars
-    }
-    if (data) {
-      vscode.postMessage({ type: 'input', data });
-      e.preventDefault();
-    }
-  });
-
-  // Parse ANSI and convert to HTML
-  function parseAnsiToHtml(text) {
-    let result = '';
+  /**
+   * Parse raw terminal data into structured segments.
+   * Strips all ANSI escape sequences, tracks current style state,
+   * and produces text segments with style metadata.
+   */
+  private parseAnsiToSegments(
+    data: string
+  ): Array<{ text: string; styles: string[] }> {
+    const segments: Array<{ text: string; styles: string[] }> = [];
+    let currentStyles: string[] = [];
+    let textBuf = '';
     let i = 0;
 
-    while (i < text.length) {
-      // ESC sequence
-      if (text[i] === '\\x1b' && text[i + 1] === '[') {
-        i += 2;
-        let params = '';
-        while (i < text.length && text[i] >= '0' && text[i] <= '9' || text[i] === ';') {
-          params += text[i++];
-        }
-        const cmd = text[i++]; // command character
+    const flush = () => {
+      if (textBuf) {
+        segments.push({ text: textBuf, styles: [...currentStyles] });
+        textBuf = '';
+      }
+    };
 
-        if (cmd === 'm') {
-          // SGR - Select Graphic Rendition
-          const codes = params ? params.split(';').map(Number) : [0];
-          result += processSGR(codes);
+    while (i < data.length) {
+      const ch = data.charCodeAt(i);
+
+      // ESC character (0x1B)
+      if (ch === 0x1b) {
+        const next = i + 1 < data.length ? data[i + 1] : '';
+
+        // CSI: ESC [
+        if (next === '[') {
+          flush();
+          i += 2;
+          let params = '';
+          while (i < data.length && ((data.charCodeAt(i) >= 0x30 && data.charCodeAt(i) <= 0x3f))) {
+            params += data[i++];
+          }
+          // Intermediate bytes
+          while (i < data.length && ((data.charCodeAt(i) >= 0x20 && data.charCodeAt(i) <= 0x2f))) {
+            i++;
+          }
+          // Final byte
+          if (i < data.length) {
+            const cmd = data[i++];
+            if (cmd === 'm') {
+              // SGR
+              const codes = params ? params.split(';').map(Number) : [0];
+              for (const code of codes) {
+                if (code === 0) {
+                  currentStyles = [];
+                } else {
+                  const cls = this.sgrToClass(code);
+                  if (cls) currentStyles.push(cls);
+                }
+              }
+            }
+            // All other CSI sequences: silently skip
+          }
+          continue;
         }
-        // Skip other escape sequences (cursor movement, clear, etc.)
-        // They don't apply well to HTML rendering
+
+        // OSC: ESC ]
+        if (next === ']') {
+          flush();
+          i += 2;
+          // Skip until BEL (0x07) or ST (ESC \)
+          while (i < data.length) {
+            if (data.charCodeAt(i) === 0x07) { i++; break; }
+            if (data.charCodeAt(i) === 0x1b && i + 1 < data.length && data[i + 1] === '\\') {
+              i += 2; break;
+            }
+            i++;
+          }
+          continue;
+        }
+
+        // Other ESC sequences: ESC followed by single char
+        if (next) {
+          i += 2;
+          continue;
+        }
+
+        i++;
         continue;
       }
 
       // Carriage return
-      if (text[i] === '\\r') {
+      if (ch === 0x0d) {
+        // CR — mark for line overwrite
+        flush();
+        segments.push({ text: '\r', styles: [] });
         i++;
         continue;
       }
 
       // Newline
-      if (text[i] === '\\n') {
-        result += '\\n';
+      if (ch === 0x0a) {
+        flush();
+        segments.push({ text: '\n', styles: [] });
         i++;
         continue;
       }
 
       // Backspace
-      if (text[i] === '\\b' || text.charCodeAt(i) === 8) {
+      if (ch === 0x08) {
+        flush();
+        segments.push({ text: '\b', styles: [] });
         i++;
         continue;
       }
 
-      // Bell
-      if (text.charCodeAt(i) === 7) {
+      // Bell — skip
+      if (ch === 0x07) {
         i++;
         continue;
       }
 
-      // Regular character — escape HTML
-      const ch = text[i];
-      if (ch === '<') result += '&lt;';
-      else if (ch === '>') result += '&gt;';
-      else if (ch === '&') result += '&amp;';
-      else result += ch;
+      // Other control chars < 0x20 (except tab) — skip
+      if (ch < 0x20 && ch !== 0x09) {
+        i++;
+        continue;
+      }
+
+      // Regular character
+      textBuf += data[i];
       i++;
     }
 
-    return result;
+    flush();
+    return segments;
   }
 
-  function processSGR(codes) {
-    let closeSpan = '';
-    let openSpan = '';
-
-    for (const code of codes) {
-      if (code === 0) {
-        // Reset
-        if (currentStyles.length > 0) {
-          closeSpan += '</span>'.repeat(currentStyles.length);
-          currentStyles = [];
-        }
-      } else {
-        const cls = sgrToClass(code);
-        if (cls) {
-          currentStyles.push(cls);
-          openSpan += '<span class="' + cls + '">';
-        }
-      }
-    }
-
-    return closeSpan + openSpan;
-  }
-
-  function sgrToClass(code) {
-    const map = {
-      1: 'ansi-bold', 2: 'ansi-dim', 3: 'ansi-italic',
-      4: 'ansi-underline', 9: 'ansi-strikethrough',
-      30: 'ansi-black', 31: 'ansi-red', 32: 'ansi-green',
-      33: 'ansi-yellow', 34: 'ansi-blue', 35: 'ansi-magenta',
-      36: 'ansi-cyan', 37: 'ansi-white',
-      90: 'ansi-bright-black', 91: 'ansi-bright-red',
-      92: 'ansi-bright-green', 93: 'ansi-bright-yellow',
-      94: 'ansi-bright-blue', 95: 'ansi-bright-magenta',
-      96: 'ansi-bright-cyan', 97: 'ansi-bright-white',
-      40: 'ansi-bg-black', 41: 'ansi-bg-red', 42: 'ansi-bg-green',
-      43: 'ansi-bg-yellow', 44: 'ansi-bg-blue', 45: 'ansi-bg-magenta',
-      46: 'ansi-bg-cyan', 47: 'ansi-bg-white',
+  private sgrToClass(code: number): string | null {
+    const map: Record<number, string> = {
+      1: 'b', 2: 'dm', 3: 'i', 4: 'u', 9: 'st',
+      30: 'f0', 31: 'f1', 32: 'f2', 33: 'f3', 34: 'f4', 35: 'f5', 36: 'f6', 37: 'f7',
+      90: 'f8', 91: 'f9', 92: 'fa', 93: 'fb', 94: 'fc', 95: 'fd', 96: 'fe', 97: 'ff',
+      40: 'b0', 41: 'b1', 42: 'b2', 43: 'b3', 44: 'b4', 45: 'b5', 46: 'b6', 47: 'b7',
     };
     return map[code] || null;
   }
 
-  // Handle messages from extension
-  window.addEventListener('message', (event) => {
-    const message = event.data;
+  private getHtml(): string {
+    return /* html */ `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --fg: var(--vscode-terminal-foreground, #d4d4d4);
+    --bg: var(--vscode-terminal-background, #1e1e1e);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    height: 100vh;
+    overflow: hidden;
+    cursor: text;
+  }
+  #terminal {
+    padding: 4px 8px;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .line {
+    min-height: 1.5em;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    unicode-bidi: plaintext;
+  }
+  /* Compact SGR classes */
+  .b { font-weight: bold; }
+  .dm { opacity: 0.7; }
+  .i { font-style: italic; }
+  .u { text-decoration: underline; }
+  .st { text-decoration: line-through; }
+  /* Foreground */
+  .f0 { color: #555; } .f1 { color: #f14c4c; } .f2 { color: #23d18b; }
+  .f3 { color: #f5f543; } .f4 { color: #3b8eea; } .f5 { color: #d670d6; }
+  .f6 { color: #29b8db; } .f7 { color: #e5e5e5; }
+  /* Bright foreground */
+  .f8 { color: #666; } .f9 { color: #f14c4c; } .fa { color: #23d18b; }
+  .fb { color: #f5f543; } .fc { color: #3b8eea; } .fd { color: #d670d6; }
+  .fe { color: #29b8db; } .ff { color: #fff; }
+  /* Background */
+  .b0 { background: #000; } .b1 { background: #cd3131; } .b2 { background: #0dbc79; }
+  .b3 { background: #e5e510; } .b4 { background: #2472c8; } .b5 { background: #bc3fbc; }
+  .b6 { background: #11a8cd; } .b7 { background: #e5e5e5; }
 
-    if (message.type === 'output') {
-      const html = parseAnsiToHtml(message.data);
-      terminal.innerHTML += html;
-      terminal.scrollTop = terminal.scrollHeight;
-    } else if (message.type === 'exit') {
-      terminal.innerHTML += '\\n[Process exited]';
+  #cursor {
+    display: inline;
+    background: var(--fg);
+    color: var(--bg);
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  #input-capture {
+    position: fixed;
+    left: -9999px;
+    top: 0;
+    opacity: 0;
+  }
+</style>
+</head>
+<body>
+<div id="terminal"><div class="line" id="current-line"><span id="cursor">&nbsp;</span></div></div>
+<textarea id="input-capture" autofocus></textarea>
+<script>
+(function() {
+  const vscode = acquireVsCodeApi();
+  const terminal = document.getElementById('terminal');
+  const input = document.getElementById('input-capture');
+  let currentLine = document.getElementById('current-line');
+  const cursor = document.getElementById('cursor');
+
+  // Focus management
+  document.addEventListener('click', () => input.focus());
+  window.addEventListener('focus', () => input.focus());
+  setTimeout(() => input.focus(), 100);
+
+  // Keyboard input
+  input.addEventListener('input', (e) => {
+    if (e.target.value) {
+      vscode.postMessage({ type: 'input', data: e.target.value });
+      e.target.value = '';
     }
   });
 
-  // Initial focus
-  input.focus();
+  input.addEventListener('keydown', (e) => {
+    const keyMap = {
+      'Enter': '\\r',
+      'Backspace': String.fromCharCode(127),
+      'Tab': '\\t',
+      'Escape': String.fromCharCode(27),
+      'ArrowUp': '\\x1b[A',
+      'ArrowDown': '\\x1b[B',
+      'ArrowRight': '\\x1b[C',
+      'ArrowLeft': '\\x1b[D',
+      'Home': '\\x1b[H',
+      'End': '\\x1b[F',
+      'Delete': '\\x1b[3~',
+    };
 
-  // Report initial size
-  const charWidth = 8.4;
-  const charHeight = 19.6;
-  const cols = Math.floor(terminal.clientWidth / charWidth);
-  const rows = Math.floor(terminal.clientHeight / charHeight);
+    if (keyMap[e.key]) {
+      vscode.postMessage({ type: 'input', data: keyMap[e.key] });
+      e.preventDefault();
+      return;
+    }
+
+    if (e.ctrlKey && e.key.length === 1) {
+      const code = e.key.toLowerCase().charCodeAt(0) - 96;
+      if (code > 0 && code < 27) {
+        vscode.postMessage({ type: 'input', data: String.fromCharCode(code) });
+        e.preventDefault();
+      }
+    }
+  });
+
+  function newLine() {
+    // Remove cursor from current line
+    if (cursor.parentNode) cursor.parentNode.removeChild(cursor);
+    // Create new line
+    currentLine = document.createElement('div');
+    currentLine.className = 'line';
+    terminal.appendChild(currentLine);
+    currentLine.appendChild(cursor);
+    scrollToBottom();
+  }
+
+  function handleCarriageReturn() {
+    // Clear current line content (keep the line element)
+    if (cursor.parentNode) cursor.parentNode.removeChild(cursor);
+    currentLine.textContent = '';
+    currentLine.appendChild(cursor);
+  }
+
+  function handleBackspace() {
+    // Remove character before cursor
+    const prev = cursor.previousSibling;
+    if (prev) {
+      if (prev.nodeType === Node.TEXT_NODE) {
+        if (prev.textContent.length > 1) {
+          prev.textContent = prev.textContent.slice(0, -1);
+        } else {
+          prev.parentNode.removeChild(prev);
+        }
+      } else if (prev.nodeType === Node.ELEMENT_NODE) {
+        if (prev.textContent.length > 1) {
+          prev.textContent = prev.textContent.slice(0, -1);
+        } else {
+          prev.parentNode.removeChild(prev);
+        }
+      }
+    }
+  }
+
+  function appendText(text, styles) {
+    if (!text) return;
+    // Insert before cursor
+    if (styles && styles.length > 0) {
+      const span = document.createElement('span');
+      span.className = styles.join(' ');
+      span.textContent = text;
+      currentLine.insertBefore(span, cursor);
+    } else {
+      const textNode = document.createTextNode(text);
+      currentLine.insertBefore(textNode, cursor);
+    }
+  }
+
+  function scrollToBottom() {
+    terminal.scrollTop = terminal.scrollHeight;
+  }
+
+  // Handle messages from extension
+  window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (msg.type === 'output') {
+      for (const seg of msg.segments) {
+        if (seg.text === '\\n') {
+          newLine();
+        } else if (seg.text === '\\r') {
+          handleCarriageReturn();
+        } else if (seg.text === '\\b') {
+          handleBackspace();
+        } else {
+          appendText(seg.text, seg.styles);
+        }
+      }
+      scrollToBottom();
+    } else if (msg.type === 'exit') {
+      appendText('\\n[Process exited]', []);
+    }
+  });
+
+  // Report size
+  const cols = Math.floor(terminal.clientWidth / 7.8);
+  const rows = Math.floor(terminal.clientHeight / 19.5);
   vscode.postMessage({ type: 'resize', cols, rows });
 })();
 </script>
