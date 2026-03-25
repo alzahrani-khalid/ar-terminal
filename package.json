@@ -1,0 +1,43 @@
+{
+  "name": "ar-terminal",
+  "displayName": "RTL Terminal",
+  "description": "RTL-aware terminal with Arabic text shaping and BiDi support for VS Code",
+  "version": "0.1.0",
+  "publisher": "khalid-alzahrani",
+  "license": "MIT",
+  "engines": { "vscode": "^1.95.0" },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "rtlTerminal.newTerminal", "title": "RTL Terminal: New Terminal" },
+      { "command": "rtlTerminal.toggleMode", "title": "RTL Terminal: Toggle Mode" },
+      { "command": "rtlTerminal.setModeOn", "title": "RTL Terminal: Set Mode On" },
+      { "command": "rtlTerminal.setModeOff", "title": "RTL Terminal: Set Mode Off" },
+      { "command": "rtlTerminal.setModeAuto", "title": "RTL Terminal: Set Mode Auto" }
+    ],
+    "terminal": {
+      "profiles": [{ "id": "rtlTerminal.rtlTerminal", "title": "RTL Terminal", "icon": "terminal" }]
+    },
+    "configuration": {
+      "title": "RTL Terminal",
+      "properties": {
+        "rtlTerminal.mode": { "type": "string", "enum": ["auto", "on", "off"], "default": "auto", "description": "RTL processing mode." },
+        "rtlTerminal.shell": { "type": "string", "default": "", "description": "Shell executable path. Empty uses VS Code default." },
+        "rtlTerminal.shellArgs": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Shell arguments." },
+        "rtlTerminal.reshapeInput": { "type": "boolean", "default": true, "description": "Reshape Arabic text as you type." },
+        "rtlTerminal.logLevel": { "type": "string", "enum": ["off", "error", "warn", "info", "debug"], "default": "off", "description": "Log level." }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.mjs --production",
+    "watch": "node esbuild.mjs --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": { "node-pty": "^1.1.0", "bidi-js": "^1.0.3" },
+  "devDependencies": { "@types/vscode": "^1.95.0", "@types/node": "^20.0.0", "esbuild": "^0.24.0", "typescript": "^5.6.0", "vitest": "^3.0.0" }
+}
