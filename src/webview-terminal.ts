@@ -274,36 +274,41 @@ export class WebviewTerminal {
         const ch = cell.getChars();
         if (!ch && x > 0) continue; // skip wide char continuations
 
-        // Extract foreground color
-        let fgColor = '#d4d4d4'; // default
+        // Extract foreground color using boolean checks (more reliable)
+        const defaultFg = term.options.theme?.foreground || '#d4d4d4';
+        let fgColor = defaultFg;
+        let bold = false;
+        let dim = false;
+        let italic = false;
         try {
-          const fgMode = cell.getFgColorMode();
-          if (fgMode === 1) {
-            // Palette color (0-255)
+          bold = cell.isBold && cell.isBold();
+          dim = cell.isDim && cell.isDim();
+          italic = cell.isItalic && cell.isItalic();
+
+          if (cell.isFgPalette && cell.isFgPalette()) {
             const idx = cell.getFgColor();
             if (idx >= 0 && idx < 16) fgColor = palette16[idx];
             else if (idx >= 16) fgColor = palette256(idx);
-          } else if (fgMode === 2) {
-            // RGB color — getFgColor returns 24-bit number
+          } else if (cell.isFgRGB && cell.isFgRGB()) {
             const rgb = cell.getFgColor();
-            if (rgb >= 0) {
-              const r = (rgb >> 16) & 0xFF;
-              const g = (rgb >> 8) & 0xFF;
-              const b = rgb & 0xFF;
-              fgColor = 'rgb(' + r + ',' + g + ',' + b + ')';
-            }
+            const r = (rgb >> 16) & 0xFF;
+            const g = (rgb >> 8) & 0xFF;
+            const b = rgb & 0xFF;
+            fgColor = 'rgb(' + r + ',' + g + ',' + b + ')';
           }
+          // else: isFgDefault — use theme foreground
         } catch(e) {
-          // Fallback to default on any color extraction error
+          // Fallback to default
         }
 
-        const bold = cell.isBold();
-        const styleKey = fgColor + (bold ? 'b' : '');
+        const styleKey = fgColor + (bold ? 'b' : '') + (dim ? 'd' : '') + (italic ? 'i' : '');
 
         if (styleKey !== currentKey || !currentSpan) {
           currentSpan = document.createElement('span');
           currentSpan.style.color = fgColor;
           if (bold) currentSpan.style.fontWeight = 'bold';
+          if (dim) currentSpan.style.opacity = '0.5';
+          if (italic) currentSpan.style.fontStyle = 'italic';
           lineDiv.appendChild(currentSpan);
           currentKey = styleKey;
         }
