@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'node:os';
 import * as pty from 'node-pty';
 import { ArabicReshaper } from './arabic-reshaper';
+import { BidiEngine } from './bidi-engine';
 import { AnsiParser } from './ansi-parser';
 import { containsRTL } from './rtl-detector';
 
@@ -18,6 +19,7 @@ export class WebviewTerminal {
   private ptyProcess: pty.IPty | undefined;
   private disposables: vscode.Disposable[] = [];
   private reshaper = new ArabicReshaper();
+  private bidiEngine = new BidiEngine();
   private ansiParser = new AnsiParser();
 
   constructor(private context: vscode.ExtensionContext) {
@@ -99,12 +101,20 @@ export class WebviewTerminal {
     // 2. If clean text has no RTL, return as-is
     if (!containsRTL(cleanText)) return data;
 
-    // 3. Reshape the entire clean text at once
-    //    This ensures Arabic chars see their neighbors for proper joining
-    const reshaped = this.reshaper.reshape(cleanText);
+    // 3. Process line by line (BiDi operates per-line)
+    const lines = cleanText.split('\n');
+    const processedLines = lines.map((line) => {
+      if (!containsRTL(line)) return line;
+      // 3a. Reshape Arabic characters (join letters)
+      const reshaped = this.reshaper.reshape(line);
+      // 3b. Apply BiDi reordering (RTL text reads right-to-left)
+      const reordered = this.bidiEngine.reorder(reshaped);
+      return reordered;
+    });
+    const processed = processedLines.join('\n');
 
     // 4. Restore ANSI codes at their original positions
-    return this.ansiParser.restore(reshaped, codes);
+    return this.ansiParser.restore(processed, codes);
   }
 
   private getHtml(): string {
