@@ -67,10 +67,11 @@ export class WebviewTerminal {
     });
 
     this.ptyProcess.onData((data: string) => {
-      // Pre-reshape Arabic before sending to xterm.js
-      // This reduces the "flash" of disconnected letters before overlay kicks in
-      const processed = this.reshapeArabicInStream(data);
-      this.panel.webview.postMessage({ type: 'output', data: processed });
+      // Send RAW data to xterm.js — don't reshape!
+      // The overlay reads raw Arabic from the buffer and the browser's
+      // native text engine connects the letters properly.
+      // Sending reshaped (presentation form) chars breaks browser shaping.
+      this.panel.webview.postMessage({ type: 'output', data });
     });
 
     this.ptyProcess.onExit(() => {
