@@ -229,6 +229,11 @@ export class WebviewTerminal {
     while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
 
     const buf = term.buffer.active;
+
+    // Skip overlay in alternate screen buffer (TUI apps like Claude Code input, vim, htop)
+    if (buf.type !== 'normal') {
+      return;
+    }
     const dims = getCellDims();
     const viewportY = buf.viewportY;
 
@@ -271,15 +276,25 @@ export class WebviewTerminal {
 
         // Extract foreground color
         let fgColor = '#d4d4d4'; // default
-        const fgMode = cell.getFgColorMode();
-        if (fgMode === 1) {
-          // Palette color (0-255)
-          const idx = cell.getFgColor();
-          if (idx < 16) fgColor = palette16[idx];
-          else fgColor = palette256(idx);
-        } else if (fgMode === 2) {
-          // RGB color
-          fgColor = '#' + cell.getFgColor().toString(16).padStart(6, '0');
+        try {
+          const fgMode = cell.getFgColorMode();
+          if (fgMode === 1) {
+            // Palette color (0-255)
+            const idx = cell.getFgColor();
+            if (idx >= 0 && idx < 16) fgColor = palette16[idx];
+            else if (idx >= 16) fgColor = palette256(idx);
+          } else if (fgMode === 2) {
+            // RGB color — getFgColor returns 24-bit number
+            const rgb = cell.getFgColor();
+            if (rgb >= 0) {
+              const r = (rgb >> 16) & 0xFF;
+              const g = (rgb >> 8) & 0xFF;
+              const b = rgb & 0xFF;
+              fgColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+            }
+          }
+        } catch(e) {
+          // Fallback to default on any color extraction error
         }
 
         const bold = cell.isBold();
