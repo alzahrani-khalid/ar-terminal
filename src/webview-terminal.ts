@@ -144,12 +144,12 @@ export class WebviewTerminal {
     left: 0;
     right: 0;
     white-space: pre;
-    unicode-bidi: plaintext;
-    direction: rtl;
-    text-align: right;
+    unicode-bidi: normal;
+    direction: ltr;
+    text-align: left;
     font-family: 'Geeza Pro', 'Arabic Typesetting', 'Noto Naskh Arabic',
                  'Tahoma', 'Arial', sans-serif;
-    padding-right: 4px;
+    padding-left: 4px;
     background: var(--vscode-terminal-background, #1e1e1e);
   }
   .c-default { color: #d4d4d4; }
