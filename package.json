@@ -20,8 +20,8 @@
         "command": "rtlTerminal.newTerminal",
         "title": "RTL Terminal: New Terminal",
         "icon": {
-          "light": "media/icon.png",
-          "dark": "media/icon.png"
+          "light": "media/sidebar-icon-light.svg",
+          "dark": "media/sidebar-icon-dark.svg"
         }
       },
       {
@@ -62,7 +62,10 @@
         {
           "id": "rtlTerminal",
           "title": "RTL Terminal",
-          "icon": "media/sidebar-icon.svg"
+          "icon": {
+            "light": "media/sidebar-icon-light.svg",
+            "dark": "media/sidebar-icon-dark.svg"
+          }
         }
       ]
     },
