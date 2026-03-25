@@ -18,6 +18,9 @@ export class WebviewTerminal {
   private disposables: vscode.Disposable[] = [];
   private reshaper = new ArabicReshaper();
 
+  // Track accumulated Arabic chars for input echo reshaping
+  private arabicEchoBuffer: string[] = [];
+
   constructor(private context: vscode.ExtensionContext) {
     this.panel = vscode.window.createWebviewPanel(
       'rtlTerminal',
@@ -80,10 +83,64 @@ export class WebviewTerminal {
   }
 
   /**
+   * Check if data is a single Arabic character echo from the shell.
+   */
+  private isSingleArabicEcho(data: string): boolean {
+    // Strip any ANSI sequences to get the actual text
+    const text = data.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+    const chars = [...text];
+    if (chars.length !== 1) return false;
+    const cp = chars[0].codePointAt(0)!;
+    return cp >= 0x0600 && cp <= 0x06FF;
+  }
+
+  /**
    * Reshape Arabic characters in terminal data while preserving
    * all ANSI escape sequences in their exact positions.
+   * Also handles retroactive reshaping of typed Arabic input.
    */
   private reshapeArabicInStream(data: string): string {
+    // Check for newline/enter — reset echo buffer
+    if (data.includes('\r') || data.includes('\n')) {
+      this.arabicEchoBuffer = [];
+    }
+
+    // Check for backspace (DEL char 0x7F or BS 0x08)
+    if (data.charCodeAt(0) === 0x7f || data.charCodeAt(0) === 0x08) {
+      this.arabicEchoBuffer.pop();
+      return data; // let xterm handle the visual backspace
+    }
+
+    // Single Arabic char echo — accumulate and re-render
+    if (this.isSingleArabicEcho(data)) {
+      // Extract the Arabic char
+      const text = data.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+      const arabicChar = [...text][0];
+
+      this.arabicEchoBuffer.push(arabicChar);
+
+      if (this.arabicEchoBuffer.length === 1) {
+        // First char — just reshape it alone
+        return this.reshaper.reshape(arabicChar);
+      }
+
+      // Move cursor back over all previous Arabic chars
+      const prevCount = this.arabicEchoBuffer.length - 1;
+      const prevReshaped = this.reshaper.reshape(this.arabicEchoBuffer.slice(0, -1).join(''));
+      const prevLen = [...prevReshaped].length;
+      const moveBack = `\x1b[${prevLen}D`;
+
+      // Reshape the entire accumulated sequence together
+      const fullReshaped = this.reshaper.reshape(this.arabicEchoBuffer.join(''));
+
+      return moveBack + fullReshaped;
+    }
+
+    // Non-Arabic single char — reset buffer if we were accumulating
+    if (!containsRTL(data) && data.length <= 2 && !data.includes('\x1b')) {
+      this.arabicEchoBuffer = [];
+    }
+
     if (!containsRTL(data)) return data;
 
     let result = '';
