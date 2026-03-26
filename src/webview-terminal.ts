@@ -37,7 +37,10 @@ export class WebviewTerminal {
     );
 
     // Set tab icon
-    this.panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'icon.png');
+    this.panel.iconPath = {
+      light: vscode.Uri.joinPath(context.extensionUri, 'media', 'sidebar-icon-dark.svg'),
+      dark: vscode.Uri.joinPath(context.extensionUri, 'media', 'sidebar-icon-dark.svg'),
+    };
 
     this.panel.webview.html = this.getHtml(this.panel.webview, context.extensionUri);
 
@@ -68,15 +71,32 @@ export class WebviewTerminal {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
-      cwd: os.homedir(),
+      cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        || (vscode.window.activeTextEditor?.document.uri.fsPath ? require('path').dirname(vscode.window.activeTextEditor.document.uri.fsPath) : undefined)
+        || vscode.workspace.rootPath
+        || os.homedir(),
       env: process.env as Record<string, string>,
     });
 
     this.ptyProcess.onData((data: string) => {
+      // Handle OSC title sequences — prefer version-like titles, skip paths
+      const oscTitlePattern = /\x1b\](?:0|1|2);([^\x07\x1b]*?)(?:\x07|\x1b\\)/g;
+      data = data.replace(oscTitlePattern, (_match, title: string) => {
+        const t = title.trim();
+        if (t && !t.includes('/')) {
+          // Prefer version numbers (e.g. "2.1.84") — don't overwrite with longer names
+          const isVersion = /^\d+\.\d+/.test(t);
+          const currentIsVersion = /^\d+\.\d+/.test(this.panel.title);
+          if (isVersion || !currentIsVersion) {
+            this.panel.title = t;
+          }
+        }
+        return '';
+      });
+
       // Send RAW data to xterm.js — don't reshape!
       // The overlay reads raw Arabic from the buffer and the browser's
       // native text engine connects the letters properly.
-      // Sending reshaped (presentation form) chars breaks browser shaping.
       this.panel.webview.postMessage({ type: 'output', data });
     });
 
@@ -219,7 +239,7 @@ export class WebviewTerminal {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: 13,
-    fontFamily: "'Menlo', 'Consolas', 'Courier New', monospace",
+    fontFamily: "'MesloLGS NF', 'MesloLGS Nerd Font', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrainsMono Nerd Font', 'Menlo', 'Consolas', 'Courier New', monospace",
     theme: {
       background: '#1e1e1e',
       foreground: '#d4d4d4',

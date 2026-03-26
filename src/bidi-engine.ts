@@ -39,7 +39,7 @@ export class BidiEngine {
     const indices = chars.map((_, i) => i);
 
     // Apply mirroring first
-    mirroredMap.forEach((replacement, index) => {
+    mirroredMap.forEach((replacement: any, index: any) => {
       chars[index] = replacement;
     });
 

@@ -2,3 +2,9 @@ node_modules/
 dist/
 *.vsix
 .DS_Store
+.env
+*.d.ts.map
+vitest.config.js
+vitest.config.js.map
+vitest.config.d.ts
+vitest.config.d.ts.map
