@@ -5,6 +5,10 @@
   "version": "0.2.1",
   "publisher": "khalid-alzahrani",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alzahrani-khalid/ar-terminal"
+  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.95.0"
