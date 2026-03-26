@@ -2,7 +2,7 @@
   "name": "ar-terminal",
   "displayName": "RTL Terminal",
   "description": "RTL-aware terminal with Arabic text shaping and BiDi support for VS Code",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "khalid-alzahrani",
   "license": "MIT",
   "icon": "media/icon.png",
