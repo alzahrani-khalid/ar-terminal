@@ -2,7 +2,7 @@
   "name": "ar-terminal",
   "displayName": "RTL Terminal",
   "description": "RTL-aware terminal with Arabic text shaping and BiDi support for VS Code",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "khalid-alzahrani",
   "license": "MIT",
   "repository": {
@@ -14,9 +14,24 @@
     "vscode": "^1.95.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Programming Languages"
   ],
-  "activationEvents": ["onStartupFinished"],
+  "keywords": [
+    "arabic",
+    "hebrew",
+    "persian",
+    "urdu",
+    "rtl",
+    "right-to-left",
+    "bidi",
+    "terminal",
+    "unicode",
+    "claude"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -147,6 +162,7 @@
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
     "bidi-js": "^1.0.3",

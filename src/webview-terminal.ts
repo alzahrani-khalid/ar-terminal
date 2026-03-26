@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import * as pty from 'node-pty';
 import { ArabicReshaper } from './arabic-reshaper';
 import { BidiEngine } from './bidi-engine';
@@ -61,20 +62,39 @@ export class WebviewTerminal {
     this.panel.onDidDispose(() => this.dispose());
   }
 
+  private getWorkspaceCwd(): string {
+    // 1. Workspace folder (most reliable)
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) {
+      return folders[0].uri.fsPath;
+    }
+    // 2. Active editor's directory
+    const activeDoc = vscode.window.activeTextEditor?.document;
+    if (activeDoc && !activeDoc.isUntitled) {
+      return path.dirname(activeDoc.uri.fsPath);
+    }
+    // 3. Deprecated rootPath fallback
+    if (vscode.workspace.rootPath) {
+      return vscode.workspace.rootPath;
+    }
+    // 4. Home directory
+    return os.homedir();
+  }
+
   private startShell(): void {
     const config = vscode.workspace.getConfiguration('rtlTerminal');
+    const termConfig = vscode.workspace.getConfiguration('terminal.integrated');
     const shell =
       config.get<string>('shell') ||
       (os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || 'bash');
+
+    const cwd = this.getWorkspaceCwd();
 
     this.ptyProcess = pty.spawn(shell, config.get<string[]>('shellArgs') || [], {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
-      cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-        || (vscode.window.activeTextEditor?.document.uri.fsPath ? require('path').dirname(vscode.window.activeTextEditor.document.uri.fsPath) : undefined)
-        || vscode.workspace.rootPath
-        || os.homedir(),
+      cwd,
       env: process.env as Record<string, string>,
     });
 
@@ -145,6 +165,13 @@ export class WebviewTerminal {
     const xtermJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'xterm.js'));
     const fitJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-fit.js'));
     const webLinksJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-web-links.js'));
+    const searchJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-search.js'));
+
+    // Sync font settings from VS Code terminal config
+    const termConfig = vscode.workspace.getConfiguration('terminal.integrated');
+    const fontSize = termConfig.get<number>('fontSize') || 13;
+    const fontFamily = termConfig.get<string>('fontFamily') ||
+      "'MesloLGS NF', 'MesloLGS Nerd Font', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrainsMono Nerd Font', 'Menlo', 'Consolas', 'Courier New', monospace";
 
     return /* html */ `<!DOCTYPE html>
 <html>
@@ -209,15 +236,57 @@ export class WebviewTerminal {
   .c-11 { color: #f5f543; } .c-12 { color: #3b8eea; } .c-13 { color: #d670d6; }
   .c-14 { color: #29b8db; } .c-15 { color: #fff; }
   .c-bold { font-weight: bold; }
+  /* Search bar */
+  #search-bar {
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 16px;
+    z-index: 20;
+    background: var(--vscode-input-background, #3c3c3c);
+    border: 1px solid var(--vscode-input-border, #555);
+    border-radius: 4px;
+    padding: 4px 8px;
+    gap: 6px;
+    align-items: center;
+  }
+  #search-bar.visible { display: flex; }
+  #search-input {
+    background: transparent;
+    border: none;
+    color: var(--vscode-input-foreground, #ccc);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    width: 200px;
+  }
+  #search-bar button {
+    background: transparent;
+    border: none;
+    color: var(--vscode-input-foreground, #ccc);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+  }
+  #search-bar button:hover { background: rgba(255,255,255,0.1); border-radius: 3px; }
+  #search-count { color: var(--vscode-descriptionForeground, #999); font-size: 12px; white-space: nowrap; }
 </style>
 </head>
 <body>
 <div id="terminal-container">
+  <div id="search-bar">
+    <input id="search-input" type="text" placeholder="Search..." />
+    <span id="search-count"></span>
+    <button id="search-prev" title="Previous">&#9650;</button>
+    <button id="search-next" title="Next">&#9660;</button>
+    <button id="search-close" title="Close">&#10005;</button>
+  </div>
   <div id="arabic-overlay"></div>
 </div>
 <script src="${xtermJs}"></script>
 <script src="${fitJs}"></script>
 <script src="${webLinksJs}"></script>
+<script src="${searchJs}"></script>
 <script>
 (function() {
   const vscode = acquireVsCodeApi();
@@ -238,8 +307,8 @@ export class WebviewTerminal {
 
   const term = new Terminal({
     cursorBlink: true,
-    fontSize: 13,
-    fontFamily: "'MesloLGS NF', 'MesloLGS Nerd Font', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrainsMono Nerd Font', 'Menlo', 'Consolas', 'Courier New', monospace",
+    fontSize: ${fontSize},
+    fontFamily: ${JSON.stringify(fontFamily)},
     theme: {
       background: '#1e1e1e',
       foreground: '#d4d4d4',
@@ -252,7 +321,9 @@ export class WebviewTerminal {
   });
 
   const fitAddon = new FitAddon.FitAddon();
+  const searchAddon = new SearchAddon.SearchAddon();
   term.loadAddon(fitAddon);
+  term.loadAddon(searchAddon);
   term.loadAddon(new WebLinksAddon.WebLinksAddon());
 
   const container = document.getElementById('terminal-container');
@@ -513,6 +584,113 @@ export class WebviewTerminal {
       term.write(msg.data);
     } else if (msg.type === 'exit') {
       term.write('\\r\\n[Process exited]');
+    }
+  });
+
+  // Search bar (Cmd+F / Ctrl+F)
+  const searchBar = document.getElementById('search-bar');
+  const searchInput = document.getElementById('search-input');
+  const searchCount = document.getElementById('search-count');
+
+  function openSearch() {
+    searchBar.classList.add('visible');
+    searchInput.focus();
+    searchInput.select();
+  }
+  function closeSearch() {
+    searchBar.classList.remove('visible');
+    searchAddon.clearDecorations();
+    searchCount.textContent = '';
+    term.focus();
+  }
+
+  document.getElementById('search-close').addEventListener('click', closeSearch);
+  document.getElementById('search-next').addEventListener('click', () => {
+    searchAddon.findNext(searchInput.value);
+  });
+  document.getElementById('search-prev').addEventListener('click', () => {
+    searchAddon.findPrevious(searchInput.value);
+  });
+
+  searchInput.addEventListener('input', () => {
+    if (searchInput.value) {
+      searchAddon.findNext(searchInput.value);
+    } else {
+      searchAddon.clearDecorations();
+      searchCount.textContent = '';
+    }
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.shiftKey ? searchAddon.findPrevious(searchInput.value) : searchAddon.findNext(searchInput.value);
+    } else if (e.key === 'Escape') {
+      closeSearch();
+    }
+  });
+
+  // Intercept Cmd+F / Ctrl+F
+  term.attachCustomKeyEventHandler((e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'f' && e.type === 'keydown') {
+      openSearch();
+      return false; // prevent default
+    }
+    if (e.key === 'Escape' && searchBar.classList.contains('visible')) {
+      closeSearch();
+      return false;
+    }
+    return true;
+  });
+
+  // Copy connected Arabic from overlay
+  document.addEventListener('copy', (e) => {
+    const overlayLines = overlay.querySelectorAll('.arabic-line');
+    if (overlayLines.length === 0) return; // no overlay, use default
+
+    const sel = term.getSelectionPosition();
+    if (!sel) return;
+
+    // Build text from overlay spans (connected Arabic)
+    const buf = term.buffer.active;
+    const viewportY = buf.viewportY;
+    const dims = getCellDims();
+    let copiedText = '';
+
+    for (let absY = sel.start.y; absY <= sel.end.y; absY++) {
+      const rowIdx = absY - viewportY;
+      // Find overlay line for this row
+      let overlayLine = null;
+      overlayLines.forEach((ld) => {
+        const top = parseFloat(ld.style.top);
+        const r = Math.round((top - dims.canvasTop) / dims.cellH);
+        if (r === rowIdx) overlayLine = ld;
+      });
+
+      let lineText = '';
+      if (overlayLine) {
+        // Get text from overlay (connected Arabic)
+        const spans = overlayLine.querySelectorAll('span:not(.overlay-cursor)');
+        spans.forEach((s) => { lineText += s.textContent || ''; });
+      } else {
+        // Get text from xterm buffer
+        const bufLine = buf.getLine(absY);
+        if (bufLine) {
+          for (let x = 0; x < bufLine.length; x++) {
+            const cell = bufLine.getCell(x);
+            if (cell) lineText += cell.getChars() || ' ';
+          }
+        }
+      }
+
+      // Trim to selection columns
+      const startX = (absY === sel.start.y) ? sel.start.x : 0;
+      const endX = (absY === sel.end.y) ? sel.end.x : lineText.length;
+      copiedText += lineText.substring(startX, endX);
+      if (absY < sel.end.y) copiedText += '\\n';
+    }
+
+    if (copiedText) {
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', copiedText.trimEnd());
     }
   });
 

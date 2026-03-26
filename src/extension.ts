@@ -7,52 +7,70 @@ import { WebviewTerminal } from './webview-terminal';
 let statusBar: StatusBarManager;
 
 export function activate(context: vscode.ExtensionContext) {
-  statusBar = new StatusBarManager();
-  statusBar.show();
-  context.subscriptions.push({ dispose: () => statusBar.dispose() });
+  try {
+    statusBar = new StatusBarManager();
+    statusBar.show();
+    context.subscriptions.push({ dispose: () => statusBar.dispose() });
+  } catch (err) {
+    console.error('[RTL Terminal] StatusBar init error:', err);
+  }
 
   // Register empty tree data provider for sidebar view (makes the icon show)
-  context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('rtlTerminal.welcome', {
-      getTreeItem: () => new vscode.TreeItem(''),
-      getChildren: () => [],
-    })
-  );
+  try {
+    context.subscriptions.push(
+      vscode.window.registerTreeDataProvider('rtlTerminal.welcome', {
+        getTreeItem: () => new vscode.TreeItem(''),
+        getChildren: () => [],
+      })
+    );
+  } catch (err) {
+    console.error('[RTL Terminal] TreeDataProvider error:', err);
+  }
 
   // Register terminal profile provider (Pseudoterminal fallback)
-  const profileProvider = vscode.window.registerTerminalProfileProvider(
-    'rtlTerminal.rtlTerminal',
-    {
-      provideTerminalProfile(): vscode.ProviderResult<vscode.TerminalProfile> {
-        return new vscode.TerminalProfile({
-          name: 'RTL Terminal',
-          pty: createRtlPseudoterminal(),
-        });
-      },
-    }
-  );
-  context.subscriptions.push(profileProvider);
+  try {
+    const profileProvider = vscode.window.registerTerminalProfileProvider(
+      'rtlTerminal.rtlTerminal',
+      {
+        provideTerminalProfile(): vscode.ProviderResult<vscode.TerminalProfile> {
+          return new vscode.TerminalProfile({
+            name: 'RTL Terminal',
+            pty: createRtlPseudoterminal(),
+          });
+        },
+      }
+    );
+    context.subscriptions.push(profileProvider);
+  } catch (err) {
+    console.error('[RTL Terminal] Profile provider error:', err);
+  }
 
-  // Register commands
+  // Track active terminal instances
+  const terminals: WebviewTerminal[] = [];
+
+  // Register commands — each wrapped in try/catch to avoid blocking others
   context.subscriptions.push(
     // Primary: WebView terminal with native Arabic rendering
     vscode.commands.registerCommand('rtlTerminal.newTerminal', () => {
-      new WebviewTerminal(context);
+      const term = new WebviewTerminal(context);
+      terminals.push(term);
     }),
     vscode.commands.registerCommand('rtlTerminal.toggleMode', () => {
-      const newMode = statusBar.toggle();
-      vscode.window.showInformationMessage(`RTL Terminal: ${newMode}`);
+      const newMode = statusBar?.toggle();
+      if (newMode) vscode.window.showInformationMessage(`RTL Terminal: ${newMode}`);
     }),
     vscode.commands.registerCommand('rtlTerminal.setModeOn', () => {
-      statusBar.setMode('on');
+      statusBar?.setMode('on');
     }),
     vscode.commands.registerCommand('rtlTerminal.setModeOff', () => {
-      statusBar.setMode('off');
+      statusBar?.setMode('off');
     }),
     vscode.commands.registerCommand('rtlTerminal.setModeAuto', () => {
-      statusBar.setMode('auto');
+      statusBar?.setMode('auto');
     })
   );
+
+  console.log('[RTL Terminal] Extension activated successfully');
 }
 
 function createRtlPseudoterminal(): vscode.Pseudoterminal {
