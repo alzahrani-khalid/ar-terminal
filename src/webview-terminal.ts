@@ -179,6 +179,19 @@ export class WebviewTerminal {
 <meta charset="UTF-8">
 <link rel="stylesheet" href="${xtermCss}">
 <style>
+  /* Load Powerline/Nerd Font glyphs from user's installed fonts */
+  @font-face {
+    font-family: 'TerminalIcons';
+    src: local('Cascadia Code PL'), local('Cascadia Mono PL'),
+         local('Cascadia Code'), local('Cascadia Mono'),
+         local('Meslo LG S for Powerline'), local('Meslo LG M for Powerline'),
+         local('MesloLGS NF'), local('MesloLGS Nerd Font'),
+         local('Hack Nerd Font'), local('FiraCode Nerd Font'),
+         local('JetBrainsMono Nerd Font'), local('Symbols Nerd Font Mono');
+    unicode-range: U+E0A0-E0D4, U+E200-E2A9, U+E0B0-E0BF, U+E5FA-E6AC,
+                   U+F000-F2E0, U+F300-F372, U+F400-F532, U+F500-FD46,
+                   U+E700-E7C5, U+F0001-F1AF0, U+E6B2-E6B5, U+23FB-23FE, U+2665, U+26A1;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--vscode-terminal-background, #1e1e1e);
@@ -206,13 +219,10 @@ export class WebviewTerminal {
     left: 0;
     right: 0;
     white-space: pre;
-    pointer-events: none;
-  }
-  .arabic-segment {
-    position: absolute;
-    white-space: nowrap;
     unicode-bidi: normal;
     direction: ltr;
+    text-align: left;
+    font-family: inherit;
     background: var(--vscode-terminal-background, #1e1e1e);
   }
   /* Overlay cursor */
@@ -310,7 +320,9 @@ export class WebviewTerminal {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: ${fontSize},
-    fontFamily: ${JSON.stringify(fontFamily)},
+    fontFamily: 'Menlo, Consolas, TerminalIcons, "Courier New", monospace',
+    customGlyphs: true,
+    letterSpacing: 0,
     theme: {
       background: '#1e1e1e',
       foreground: '#d4d4d4',
@@ -375,7 +387,7 @@ export class WebviewTerminal {
     return defaultFg;
   }
 
-  // Scan visible rows, overlay ONLY Arabic text segments (not entire lines)
+  // Scan visible rows, overlay lines that contain Arabic text
   function updateArabicOverlay() {
     while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
 
@@ -387,91 +399,61 @@ export class WebviewTerminal {
       const bufLine = buf.getLine(viewportY + y);
       if (!bufLine) continue;
 
-      // Collect cells with their characters and positions
-      const cells = [];
+      // Check if line has RTL text
+      let hasRTL = false;
+      for (let x = 0; x < bufLine.length; x++) {
+        const cell = bufLine.getCell(x);
+        if (!cell) continue;
+        const ch = cell.getChars();
+        if (ch && isRTLChar(ch.codePointAt(0))) { hasRTL = true; break; }
+      }
+      if (!hasRTL) continue;
+
+      // Create full-line overlay
+      const lineDiv = document.createElement('div');
+      lineDiv.className = 'arabic-line';
+      lineDiv.style.top = (dims.canvasTop + y * dims.cellH) + 'px';
+      lineDiv.style.height = dims.cellH + 'px';
+      lineDiv.style.lineHeight = dims.cellH + 'px';
+      lineDiv.style.fontSize = term.options.fontSize + 'px';
+
+      let currentSpan = null;
+      let currentKey = '';
+
       for (let x = 0; x < bufLine.length; x++) {
         const cell = bufLine.getCell(x);
         if (!cell) continue;
         const ch = cell.getChars();
         if (!ch && x > 0) continue;
-        cells.push({ x, ch: ch || ' ', cell });
-      }
 
-      // Find contiguous Arabic segments
-      const segments = [];
-      let segStart = -1;
-      for (let i = 0; i < cells.length; i++) {
-        const cp = cells[i].ch.codePointAt(0);
-        const isArabic = isRTLChar(cp) || (cp >= 0x0610 && cp <= 0x061A) || (cp >= 0x064B && cp <= 0x065F) || cp === 0x0670;
-        if (isArabic) {
-          if (segStart === -1) segStart = i;
-        } else {
-          if (segStart !== -1) {
-            segments.push({ start: segStart, end: i });
-            segStart = -1;
-          }
+        const fgColor = getCellColor(cell);
+        let bold = false, dim = false, italic = false;
+        try {
+          bold = cell.isBold && cell.isBold();
+          dim = cell.isDim && cell.isDim();
+          italic = cell.isItalic && cell.isItalic();
+        } catch(e) {}
+
+        const key = fgColor + (bold?'b':'') + (dim?'d':'') + (italic?'i':'');
+        if (key !== currentKey || !currentSpan) {
+          currentSpan = document.createElement('span');
+          currentSpan.style.color = fgColor;
+          if (bold) currentSpan.style.fontWeight = 'bold';
+          if (dim) currentSpan.style.opacity = '0.5';
+          if (italic) currentSpan.style.fontStyle = 'italic';
+          lineDiv.appendChild(currentSpan);
+          currentKey = key;
         }
-      }
-      if (segStart !== -1) segments.push({ start: segStart, end: cells.length });
-
-      if (segments.length === 0) continue;
-
-      // Create a line container
-      const lineDiv = document.createElement('div');
-      lineDiv.className = 'arabic-line';
-      lineDiv.style.top = (dims.canvasTop + y * dims.cellH) + 'px';
-      lineDiv.style.height = dims.cellH + 'px';
-
-      // For each Arabic segment, create a positioned overlay
-      for (const seg of segments) {
-        const segDiv = document.createElement('span');
-        segDiv.className = 'arabic-segment';
-        segDiv.style.left = (dims.canvasLeft + cells[seg.start].x * dims.cellW) + 'px';
-        segDiv.style.top = '0';
-        segDiv.style.height = dims.cellH + 'px';
-        segDiv.style.lineHeight = dims.cellH + 'px';
-        segDiv.style.fontSize = term.options.fontSize + 'px';
-        // Width covers all cells in the segment
-        segDiv.style.width = ((cells[seg.end - 1].x - cells[seg.start].x + 1) * dims.cellW) + 'px';
-
-        // Build styled text for this segment
-        let currentSpan = null;
-        let currentKey = '';
-        for (let i = seg.start; i < seg.end; i++) {
-          const c = cells[i];
-          const fgColor = getCellColor(c.cell);
-          let bold = false, dim = false, italic = false;
-          try {
-            bold = c.cell.isBold && c.cell.isBold();
-            dim = c.cell.isDim && c.cell.isDim();
-            italic = c.cell.isItalic && c.cell.isItalic();
-          } catch(e) {}
-          const key = fgColor + (bold?'b':'') + (dim?'d':'') + (italic?'i':'');
-          if (key !== currentKey || !currentSpan) {
-            currentSpan = document.createElement('span');
-            currentSpan.style.color = fgColor;
-            if (bold) currentSpan.style.fontWeight = 'bold';
-            if (dim) currentSpan.style.opacity = '0.5';
-            if (italic) currentSpan.style.fontStyle = 'italic';
-            segDiv.appendChild(currentSpan);
-            currentKey = key;
-          }
-          currentSpan.textContent += c.ch;
-        }
-        lineDiv.appendChild(segDiv);
+        currentSpan.textContent += ch || ' ';
       }
 
-      // Add cursor if on this line and within an Arabic segment
+      // Cursor on this line
       if (y === buf.cursorY) {
-        const cx = buf.cursorX;
-        const inArabic = segments.some(s => cx >= cells[s.start].x && cx <= cells[s.end-1].x);
-        if (inArabic) {
-          const cursorEl = document.createElement('span');
-          cursorEl.className = 'overlay-cursor';
-          cursorEl.style.left = (dims.canvasLeft + cx * dims.cellW) + 'px';
-          cursorEl.style.height = dims.cellH + 'px';
-          lineDiv.appendChild(cursorEl);
-        }
+        const cursorEl = document.createElement('span');
+        cursorEl.className = 'overlay-cursor';
+        cursorEl.style.left = (dims.canvasLeft + buf.cursorX * dims.cellW) + 'px';
+        cursorEl.style.height = dims.cellH + 'px';
+        lineDiv.appendChild(cursorEl);
       }
 
       overlay.appendChild(lineDiv);
