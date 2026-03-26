@@ -206,11 +206,13 @@ export class WebviewTerminal {
     left: 0;
     right: 0;
     white-space: pre;
+    pointer-events: none;
+  }
+  .arabic-segment {
+    position: absolute;
+    white-space: nowrap;
     unicode-bidi: normal;
     direction: ltr;
-    text-align: left;
-    font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
-    padding-left: 4px;
     background: var(--vscode-terminal-background, #1e1e1e);
   }
   /* Overlay cursor */
@@ -345,15 +347,39 @@ export class WebviewTerminal {
     return { cellW: 7.8, cellH: 17, canvasTop: 0, canvasLeft: 0 };
   }
 
-  // Scan visible terminal rows, overlay Arabic lines with proper HTML text
+  // ANSI 16-color palette
+  const palette16 = [
+    '#000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5',
+    '#666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#fff'
+  ];
+  function palette256(idx) {
+    if (idx < 16) return palette16[idx];
+    if (idx < 232) {
+      const i = idx - 16;
+      return 'rgb(' + Math.floor(i/36)*51 + ',' + Math.floor((i%36)/6)*51 + ',' + (i%6)*51 + ')';
+    }
+    const g = (idx - 232) * 10 + 8;
+    return 'rgb(' + g + ',' + g + ',' + g + ')';
+  }
+  function getCellColor(cell) {
+    const defaultFg = term.options.theme?.foreground || '#d4d4d4';
+    try {
+      if (cell.isFgPalette && cell.isFgPalette()) {
+        const idx = cell.getFgColor();
+        return idx < 16 ? palette16[idx] : palette256(idx);
+      } else if (cell.isFgRGB && cell.isFgRGB()) {
+        const rgb = cell.getFgColor();
+        return 'rgb(' + ((rgb>>16)&0xFF) + ',' + ((rgb>>8)&0xFF) + ',' + (rgb&0xFF) + ')';
+      }
+    } catch(e) {}
+    return defaultFg;
+  }
+
+  // Scan visible rows, overlay ONLY Arabic text segments (not entire lines)
   function updateArabicOverlay() {
-    // Clear overlay using DOM methods (safe, no innerHTML)
     while (overlay.firstChild) overlay.removeChild(overlay.firstChild);
 
     const buf = term.buffer.active;
-
-    // Note: overlay works in both normal and alternate screen buffers
-    // This enables Arabic rendering in TUI apps like Claude Code
     const dims = getCellDims();
     const viewportY = buf.viewportY;
 
@@ -361,111 +387,96 @@ export class WebviewTerminal {
       const bufLine = buf.getLine(viewportY + y);
       if (!bufLine) continue;
 
-      // Extract full line text
-      let lineText = '';
-      for (let x = 0; x < bufLine.length; x++) {
-        const cell = bufLine.getCell(x);
-        if (cell) lineText += cell.getChars() || ' ';
-      }
-
-      if (!containsRTL(lineText.trim())) continue;
-
-      // Create overlay div for this line
-      const lineDiv = document.createElement('div');
-      lineDiv.className = 'arabic-line';
-      lineDiv.style.top = (dims.canvasTop + y * dims.cellH) + 'px';
-      lineDiv.style.height = dims.cellH + 'px';
-      lineDiv.style.lineHeight = dims.cellH + 'px';
-      lineDiv.style.fontSize = term.options.fontSize + 'px';
-
-      // ANSI 16-color palette
-      const palette16 = [
-        '#000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5',
-        '#666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#fff'
-      ];
-
-      // Build styled text segments with full color support
-      let currentSpan = null;
-      let currentKey = '';
-
+      // Collect cells with their characters and positions
+      const cells = [];
       for (let x = 0; x < bufLine.length; x++) {
         const cell = bufLine.getCell(x);
         if (!cell) continue;
         const ch = cell.getChars();
-        if (!ch && x > 0) continue; // skip wide char continuations
+        if (!ch && x > 0) continue;
+        cells.push({ x, ch: ch || ' ', cell });
+      }
 
-        // Extract foreground color using boolean checks (more reliable)
-        const defaultFg = term.options.theme?.foreground || '#d4d4d4';
-        let fgColor = defaultFg;
-        let bold = false;
-        let dim = false;
-        let italic = false;
-        try {
-          bold = cell.isBold && cell.isBold();
-          dim = cell.isDim && cell.isDim();
-          italic = cell.isItalic && cell.isItalic();
-
-          if (cell.isFgPalette && cell.isFgPalette()) {
-            const idx = cell.getFgColor();
-            if (idx >= 0 && idx < 16) fgColor = palette16[idx];
-            else if (idx >= 16) fgColor = palette256(idx);
-          } else if (cell.isFgRGB && cell.isFgRGB()) {
-            const rgb = cell.getFgColor();
-            const r = (rgb >> 16) & 0xFF;
-            const g = (rgb >> 8) & 0xFF;
-            const b = rgb & 0xFF;
-            fgColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+      // Find contiguous Arabic segments
+      const segments = [];
+      let segStart = -1;
+      for (let i = 0; i < cells.length; i++) {
+        const cp = cells[i].ch.codePointAt(0);
+        const isArabic = isRTLChar(cp) || (cp >= 0x0610 && cp <= 0x061A) || (cp >= 0x064B && cp <= 0x065F) || cp === 0x0670;
+        if (isArabic) {
+          if (segStart === -1) segStart = i;
+        } else {
+          if (segStart !== -1) {
+            segments.push({ start: segStart, end: i });
+            segStart = -1;
           }
-          // else: isFgDefault — use theme foreground
-        } catch(e) {
-          // Fallback to default
         }
+      }
+      if (segStart !== -1) segments.push({ start: segStart, end: cells.length });
 
-        const styleKey = fgColor + (bold ? 'b' : '') + (dim ? 'd' : '') + (italic ? 'i' : '');
+      if (segments.length === 0) continue;
 
-        if (styleKey !== currentKey || !currentSpan) {
-          currentSpan = document.createElement('span');
-          currentSpan.style.color = fgColor;
-          if (bold) currentSpan.style.fontWeight = 'bold';
-          if (dim) currentSpan.style.opacity = '0.5';
-          if (italic) currentSpan.style.fontStyle = 'italic';
-          lineDiv.appendChild(currentSpan);
-          currentKey = styleKey;
+      // Create a line container
+      const lineDiv = document.createElement('div');
+      lineDiv.className = 'arabic-line';
+      lineDiv.style.top = (dims.canvasTop + y * dims.cellH) + 'px';
+      lineDiv.style.height = dims.cellH + 'px';
+
+      // For each Arabic segment, create a positioned overlay
+      for (const seg of segments) {
+        const segDiv = document.createElement('span');
+        segDiv.className = 'arabic-segment';
+        segDiv.style.left = (dims.canvasLeft + cells[seg.start].x * dims.cellW) + 'px';
+        segDiv.style.top = '0';
+        segDiv.style.height = dims.cellH + 'px';
+        segDiv.style.lineHeight = dims.cellH + 'px';
+        segDiv.style.fontSize = term.options.fontSize + 'px';
+        // Width covers all cells in the segment
+        segDiv.style.width = ((cells[seg.end - 1].x - cells[seg.start].x + 1) * dims.cellW) + 'px';
+
+        // Build styled text for this segment
+        let currentSpan = null;
+        let currentKey = '';
+        for (let i = seg.start; i < seg.end; i++) {
+          const c = cells[i];
+          const fgColor = getCellColor(c.cell);
+          let bold = false, dim = false, italic = false;
+          try {
+            bold = c.cell.isBold && c.cell.isBold();
+            dim = c.cell.isDim && c.cell.isDim();
+            italic = c.cell.isItalic && c.cell.isItalic();
+          } catch(e) {}
+          const key = fgColor + (bold?'b':'') + (dim?'d':'') + (italic?'i':'');
+          if (key !== currentKey || !currentSpan) {
+            currentSpan = document.createElement('span');
+            currentSpan.style.color = fgColor;
+            if (bold) currentSpan.style.fontWeight = 'bold';
+            if (dim) currentSpan.style.opacity = '0.5';
+            if (italic) currentSpan.style.fontStyle = 'italic';
+            segDiv.appendChild(currentSpan);
+            currentKey = key;
+          }
+          currentSpan.textContent += c.ch;
         }
-        currentSpan.textContent += ch || ' ';
+        lineDiv.appendChild(segDiv);
       }
 
-      // 256-color palette helper
-      function palette256(idx) {
-        if (idx < 16) return palette16[idx];
-        if (idx < 232) {
-          const i = idx - 16;
-          const r = Math.floor(i / 36) * 51;
-          const g = Math.floor((i % 36) / 6) * 51;
-          const b = (i % 6) * 51;
-          return 'rgb(' + r + ',' + g + ',' + b + ')';
+      // Add cursor if on this line and within an Arabic segment
+      if (y === buf.cursorY) {
+        const cx = buf.cursorX;
+        const inArabic = segments.some(s => cx >= cells[s.start].x && cx <= cells[s.end-1].x);
+        if (inArabic) {
+          const cursorEl = document.createElement('span');
+          cursorEl.className = 'overlay-cursor';
+          cursorEl.style.left = (dims.canvasLeft + cx * dims.cellW) + 'px';
+          cursorEl.style.height = dims.cellH + 'px';
+          lineDiv.appendChild(cursorEl);
         }
-        const gray = (idx - 232) * 10 + 8;
-        return 'rgb(' + gray + ',' + gray + ',' + gray + ')';
-      }
-
-      // Add cursor if it's on this line
-      const cursorY = buf.cursorY;
-      const cursorX = buf.cursorX;
-      if (y === cursorY) {
-        const cursorEl = document.createElement('span');
-        cursorEl.className = 'overlay-cursor';
-        // Position cursor at the right character offset
-        const cellW = getCellDims().cellW || 7.8;
-        cursorEl.style.left = (dims.canvasLeft + cursorX * cellW) + 'px';
-        cursorEl.style.height = dims.cellH + 'px';
-        lineDiv.appendChild(cursorEl);
       }
 
       overlay.appendChild(lineDiv);
     }
 
-    // Apply selection highlighting
     applySelectionHighlight();
   }
 
