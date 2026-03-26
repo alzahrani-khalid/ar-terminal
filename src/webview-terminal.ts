@@ -166,12 +166,16 @@ export class WebviewTerminal {
     const fitJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-fit.js'));
     const webLinksJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-web-links.js'));
     const searchJs = webview.asWebviewUri(vscode.Uri.joinPath(mediaUri, 'addon-search.js'));
+    const nerdFontUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(extensionUri, 'media', 'SymbolsNerdFontMono-Regular.ttf')
+    );
 
     // Sync font settings from VS Code terminal config
     const termConfig = vscode.workspace.getConfiguration('terminal.integrated');
     const fontSize = termConfig.get<number>('fontSize') || 13;
     const fontFamily = termConfig.get<string>('fontFamily') ||
       "'MesloLGS NF', 'MesloLGS Nerd Font', 'Hack Nerd Font', 'FiraCode Nerd Font', 'JetBrainsMono Nerd Font', 'Menlo', 'Consolas', 'Courier New', monospace";
+    const xtermFontFamily = "'Menlo', 'Consolas', 'Courier New', monospace";
 
     return /* html */ `<!DOCTYPE html>
 <html>
@@ -179,18 +183,14 @@ export class WebviewTerminal {
 <meta charset="UTF-8">
 <link rel="stylesheet" href="${xtermCss}">
 <style>
-  /* Load Powerline/Nerd Font glyphs from user's installed fonts */
+  /* Bundled Nerd Font symbols — covers Powerline, Devicons, Font Awesome, etc. */
   @font-face {
     font-family: 'TerminalIcons';
-    src: local('Cascadia Code PL'), local('Cascadia Mono PL'),
-         local('Cascadia Code'), local('Cascadia Mono'),
-         local('Meslo LG S for Powerline'), local('Meslo LG M for Powerline'),
-         local('MesloLGS NF'), local('MesloLGS Nerd Font'),
-         local('Hack Nerd Font'), local('FiraCode Nerd Font'),
-         local('JetBrainsMono Nerd Font'), local('Symbols Nerd Font Mono');
+    src: url('${nerdFontUri}') format('truetype');
     unicode-range: U+E0A0-E0D4, U+E200-E2A9, U+E0B0-E0BF, U+E5FA-E6AC,
                    U+F000-F2E0, U+F300-F372, U+F400-F532, U+F500-FD46,
-                   U+E700-E7C5, U+F0001-F1AF0, U+E6B2-E6B5, U+23FB-23FE, U+2665, U+26A1;
+                   U+E700-E7C5, U+F0001-F1AF0, U+E6B2-E6B5, U+23FB-23FE, U+2665, U+26A1,
+                   U+2630, U+E0CA, U+E0CC, U+E0CE, U+E0CF, U+E0D0, U+E0D1, U+E0D2, U+E0D4;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -222,7 +222,7 @@ export class WebviewTerminal {
     unicode-bidi: normal;
     direction: ltr;
     text-align: left;
-    font-family: inherit;
+    font-family: ${fontFamily}, TerminalIcons, monospace;
     background: var(--vscode-terminal-background, #1e1e1e);
   }
   /* Overlay cursor */
@@ -310,6 +310,17 @@ export class WebviewTerminal {
            (cp >= 0x08A0 && cp <= 0x08FF) || (cp >= 0xFB1D && cp <= 0xFB4F) ||
            (cp >= 0xFB50 && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF);
   }
+  // Nerd Font Private Use Area glyphs (Powerline, Devicons, FA, etc.)
+  function isNerdFontChar(cp) {
+    return (cp >= 0xE0A0 && cp <= 0xE0D4) || (cp >= 0xE0B0 && cp <= 0xE0CF) ||
+           (cp >= 0xE200 && cp <= 0xE2A9) || (cp >= 0xE5FA && cp <= 0xE6B5) ||
+           (cp >= 0xE700 && cp <= 0xE7C5) || (cp >= 0xEA60 && cp <= 0xEBEB) ||
+           (cp >= 0xF000 && cp <= 0xFD46) || (cp >= 0xF0001 && cp <= 0xF1AF0) ||
+           (cp >= 0x23FB && cp <= 0x23FE) || cp === 0x2665 || cp === 0x26A1;
+  }
+  function needsOverlay(cp) {
+    return isRTLChar(cp) || isNerdFontChar(cp);
+  }
   function containsRTL(text) {
     for (const ch of text) {
       if (isRTLChar(ch.codePointAt(0))) return true;
@@ -320,7 +331,7 @@ export class WebviewTerminal {
   const term = new Terminal({
     cursorBlink: true,
     fontSize: ${fontSize},
-    fontFamily: 'Menlo, Consolas, TerminalIcons, "Courier New", monospace',
+    fontFamily: "${xtermFontFamily}",
     customGlyphs: true,
     letterSpacing: 0,
     theme: {
@@ -335,10 +346,15 @@ export class WebviewTerminal {
   });
 
   const fitAddon = new FitAddon.FitAddon();
-  const searchAddon = new SearchAddon.SearchAddon();
+  let searchAddon = null;
   term.loadAddon(fitAddon);
-  term.loadAddon(searchAddon);
-  term.loadAddon(new WebLinksAddon.WebLinksAddon());
+  try {
+    if (typeof SearchAddon !== 'undefined') {
+      searchAddon = new SearchAddon.SearchAddon();
+      term.loadAddon(searchAddon);
+    }
+  } catch(e) { console.warn('[RTL Terminal] Search addon failed:', e); }
+  try { term.loadAddon(new WebLinksAddon.WebLinksAddon()); } catch(e) {}
 
   const container = document.getElementById('terminal-container');
   term.open(container);
@@ -399,15 +415,15 @@ export class WebviewTerminal {
       const bufLine = buf.getLine(viewportY + y);
       if (!bufLine) continue;
 
-      // Check if line has RTL text
-      let hasRTL = false;
+      // Check if line has RTL text or Nerd Font icons
+      let lineNeedsOverlay = false;
       for (let x = 0; x < bufLine.length; x++) {
         const cell = bufLine.getCell(x);
         if (!cell) continue;
         const ch = cell.getChars();
-        if (ch && isRTLChar(ch.codePointAt(0))) { hasRTL = true; break; }
+        if (ch && needsOverlay(ch.codePointAt(0))) { lineNeedsOverlay = true; break; }
       }
-      if (!hasRTL) continue;
+      if (!lineNeedsOverlay) continue;
 
       // Create full-line overlay
       const lineDiv = document.createElement('div');
@@ -592,7 +608,7 @@ export class WebviewTerminal {
   }
   function closeSearch() {
     searchBar.classList.remove('visible');
-    searchAddon.clearDecorations();
+    if (searchAddon) searchAddon.clearDecorations();
     searchCount.textContent = '';
     term.focus();
   }
@@ -606,6 +622,7 @@ export class WebviewTerminal {
   });
 
   searchInput.addEventListener('input', () => {
+    if (!searchAddon) return;
     if (searchInput.value) {
       searchAddon.findNext(searchInput.value);
     } else {
@@ -614,7 +631,7 @@ export class WebviewTerminal {
     }
   });
   searchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && searchAddon) {
       e.shiftKey ? searchAddon.findPrevious(searchInput.value) : searchAddon.findNext(searchInput.value);
     } else if (e.key === 'Escape') {
       closeSearch();
@@ -686,6 +703,9 @@ export class WebviewTerminal {
       e.clipboardData.setData('text/plain', copiedText.trimEnd());
     }
   });
+
+  // Re-render overlay once bundled Nerd Font is loaded
+  document.fonts.ready.then(() => scheduleOverlay());
 
   vscode.postMessage({ type: 'ready' });
 })();
