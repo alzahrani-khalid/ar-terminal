@@ -581,6 +581,14 @@ export class WebviewTerminal {
     vscode.postMessage({ type: 'resize', cols, rows });
   });
 
+  // Auto-focus xterm when webview panel is activated (fixes first-click-to-type)
+  window.addEventListener('focus', () => {
+    if (!searchBar.classList.contains('visible')) term.focus();
+  });
+  document.addEventListener('click', (e) => {
+    if (!searchBar.contains(e.target)) term.focus();
+  });
+
   const resizeObserver = new ResizeObserver(() => {
     fitAddon.fit();
     scheduleOverlay();
