@@ -2,7 +2,7 @@
   "name": "ar-terminal",
   "displayName": "RTL Terminal",
   "description": "RTL-aware terminal with Arabic text shaping and BiDi support for VS Code",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "publisher": "khalid-alzahrani",
   "license": "MIT",
   "repository": {
@@ -82,43 +82,57 @@
       {
         "command": "rtlTerminal.sendSequence",
         "key": "cmd+backspace",
-        "args": { "data": "\u0015" },
+        "args": {
+          "data": "\u0015"
+        },
         "when": "activeWebviewPanelId == 'rtlTerminal'"
       },
       {
         "command": "rtlTerminal.sendSequence",
         "key": "cmd+left",
-        "args": { "data": "\u0001" },
+        "args": {
+          "data": "\u0001"
+        },
         "when": "activeWebviewPanelId == 'rtlTerminal'"
       },
       {
         "command": "rtlTerminal.sendSequence",
         "key": "cmd+right",
-        "args": { "data": "\u0005" },
+        "args": {
+          "data": "\u0005"
+        },
         "when": "activeWebviewPanelId == 'rtlTerminal'"
       },
       {
         "command": "rtlTerminal.sendSequence",
         "key": "alt+backspace",
-        "args": { "data": "\u0017" },
+        "args": {
+          "data": "\u0017"
+        },
         "when": "activeWebviewPanelId == 'rtlTerminal'"
       },
       {
         "command": "rtlTerminal.sendSequence",
         "key": "alt+left",
-        "args": { "data": "\u001bb" },
+        "args": {
+          "data": "\u001bb"
+        },
         "when": "activeWebviewPanelId == 'rtlTerminal'"
       },
       {
         "command": "rtlTerminal.sendSequence",
         "key": "alt+right",
-        "args": { "data": "\u001bf" },
+        "args": {
+          "data": "\u001bf"
+        },
         "when": "activeWebviewPanelId == 'rtlTerminal'"
       },
       {
         "command": "rtlTerminal.sendSequence",
         "key": "cmd+k",
-        "args": { "data": "\u000c" },
+        "args": {
+          "data": "\f"
+        },
         "when": "activeWebviewPanelId == 'rtlTerminal'"
       }
     ],
