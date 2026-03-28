@@ -47,6 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Track active terminal instances
   const terminals: WebviewTerminal[] = [];
+  let activeTerminal: WebviewTerminal | undefined;
 
   // Register commands — each wrapped in try/catch to avoid blocking others
   context.subscriptions.push(
@@ -54,6 +55,19 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('rtlTerminal.newTerminal', () => {
       const term = new WebviewTerminal(context);
       terminals.push(term);
+      activeTerminal = term;
+      term.onDidFocus(() => { activeTerminal = term; });
+      term.onDidDispose(() => {
+        const idx = terminals.indexOf(term);
+        if (idx >= 0) terminals.splice(idx, 1);
+        if (activeTerminal === term) activeTerminal = terminals[terminals.length - 1];
+      });
+    }),
+    // Keybinding passthrough — sends escape sequences to the active PTY
+    vscode.commands.registerCommand('rtlTerminal.sendSequence', (args: { data: string }) => {
+      if (activeTerminal && args?.data) {
+        activeTerminal.writeToPty(args.data);
+      }
     }),
     vscode.commands.registerCommand('rtlTerminal.toggleMode', () => {
       const newMode = statusBar?.toggle();

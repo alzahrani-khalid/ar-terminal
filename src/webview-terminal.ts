@@ -22,6 +22,10 @@ export class WebviewTerminal {
   private reshaper = new ArabicReshaper();
   private bidiEngine = new BidiEngine();
   private ansiParser = new AnsiParser();
+  private _onDidFocus = new vscode.EventEmitter<void>();
+  readonly onDidFocus = this._onDidFocus.event;
+  private _onDidDispose = new vscode.EventEmitter<void>();
+  readonly onDidDispose = this._onDidDispose.event;
 
   constructor(private context: vscode.ExtensionContext) {
     this.panel = vscode.window.createWebviewPanel(
@@ -59,7 +63,19 @@ export class WebviewTerminal {
       this.disposables
     );
 
-    this.panel.onDidDispose(() => this.dispose());
+    this.panel.onDidDispose(() => {
+      this._onDidDispose.fire();
+      this.dispose();
+    });
+
+    this.panel.onDidChangeViewState((e) => {
+      if (e.webviewPanel.active) this._onDidFocus.fire();
+    });
+  }
+
+  /** Write data directly to the PTY (used by keybinding passthrough) */
+  writeToPty(data: string): void {
+    this.ptyProcess?.write(data);
   }
 
   private getWorkspaceCwd(): string {

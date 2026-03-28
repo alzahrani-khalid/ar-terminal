@@ -58,6 +58,10 @@
       {
         "command": "rtlTerminal.setModeAuto",
         "title": "RTL Terminal: Set Mode Auto"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "title": "RTL Terminal: Send Sequence"
       }
     ],
     "terminal": {
@@ -74,6 +78,48 @@
         "command": "rtlTerminal.newTerminal",
         "key": "ctrl+shift+t",
         "mac": "cmd+shift+t"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "key": "cmd+backspace",
+        "args": { "data": "\u0015" },
+        "when": "activeWebviewPanelId == 'rtlTerminal'"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "key": "cmd+left",
+        "args": { "data": "\u0001" },
+        "when": "activeWebviewPanelId == 'rtlTerminal'"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "key": "cmd+right",
+        "args": { "data": "\u0005" },
+        "when": "activeWebviewPanelId == 'rtlTerminal'"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "key": "alt+backspace",
+        "args": { "data": "\u0017" },
+        "when": "activeWebviewPanelId == 'rtlTerminal'"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "key": "alt+left",
+        "args": { "data": "\u001bb" },
+        "when": "activeWebviewPanelId == 'rtlTerminal'"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "key": "alt+right",
+        "args": { "data": "\u001bf" },
+        "when": "activeWebviewPanelId == 'rtlTerminal'"
+      },
+      {
+        "command": "rtlTerminal.sendSequence",
+        "key": "cmd+k",
+        "args": { "data": "\u000c" },
+        "when": "activeWebviewPanelId == 'rtlTerminal'"
       }
     ],
     "viewsContainers": {
