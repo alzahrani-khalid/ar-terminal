@@ -298,6 +298,39 @@ export class WebviewTerminal {
   }
   #search-bar button:hover { background: rgba(255,255,255,0.1); border-radius: 3px; }
   #search-count { color: var(--vscode-descriptionForeground, #999); font-size: 12px; white-space: nowrap; }
+  /* Custom context menu */
+  #ctx-menu {
+    display: none;
+    position: fixed;
+    z-index: 50;
+    background: var(--vscode-menu-background, #252526);
+    border: 1px solid var(--vscode-menu-border, #454545);
+    border-radius: 5px;
+    padding: 4px 0;
+    min-width: 140px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  #ctx-menu.visible { display: block; }
+  #ctx-menu button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--vscode-menu-foreground, #ccc);
+    font-size: 13px;
+    font-family: inherit;
+    padding: 4px 20px;
+    cursor: pointer;
+    text-align: left;
+  }
+  #ctx-menu button:hover {
+    background: var(--vscode-menu-selectionBackground, #094771);
+    color: var(--vscode-menu-selectionForeground, #fff);
+  }
+  #ctx-menu .shortcut { font-size: 11px; opacity: 0.7; margin-left: 24px; }
+  #ctx-menu hr { border: none; border-top: 1px solid var(--vscode-menu-separatorBackground, #454545); margin: 4px 0; }
 </style>
 </head>
 <body>
@@ -310,6 +343,13 @@ export class WebviewTerminal {
     <button id="search-close" title="Close">&#10005;</button>
   </div>
   <div id="arabic-overlay"></div>
+  <div id="ctx-menu">
+    <button data-action="copy">Copy<span class="shortcut">⌘C</span></button>
+    <button data-action="paste">Paste<span class="shortcut">⌘V</span></button>
+    <hr/>
+    <button data-action="clear">Clear<span class="shortcut">⌘K</span></button>
+    <button data-action="selectAll">Select All<span class="shortcut">⌘A</span></button>
+  </div>
 </div>
 <script src="${xtermJs}"></script>
 <script src="${fitJs}"></script>
@@ -673,6 +713,43 @@ export class WebviewTerminal {
       return false;
     }
     return true;
+  });
+
+  // Custom context menu (right-click)
+  const ctxMenu = document.getElementById('ctx-menu');
+  function hideCtxMenu() { ctxMenu.classList.remove('visible'); }
+
+  document.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    // Position at mouse, clamped to viewport
+    const x = Math.min(e.clientX, window.innerWidth - 160);
+    const y = Math.min(e.clientY, window.innerHeight - 140);
+    ctxMenu.style.left = x + 'px';
+    ctxMenu.style.top = y + 'px';
+    ctxMenu.classList.add('visible');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!ctxMenu.contains(e.target)) hideCtxMenu();
+  });
+
+  ctxMenu.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    hideCtxMenu();
+    const action = btn.dataset.action;
+    if (action === 'copy') {
+      document.execCommand('copy');
+    } else if (action === 'paste') {
+      navigator.clipboard.readText().then((text) => {
+        vscode.postMessage({ type: 'input', data: text });
+      }).catch(() => {});
+    } else if (action === 'clear') {
+      term.clear();
+    } else if (action === 'selectAll') {
+      term.selectAll();
+    }
+    term.focus();
   });
 
   // Copy connected Arabic from overlay
